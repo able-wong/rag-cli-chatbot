@@ -9,6 +9,15 @@ case "$1" in
         echo "Running tests..."
         pytest
         ;;
+    integration-test)
+        echo "Running integration tests..."
+        echo "Note: Integration tests require a working config.yaml with valid LLM provider settings"
+        if [ ! -f "config/config.yaml" ]; then
+            echo "Error: config/config.yaml not found. Copy config/config.sample.yaml and configure your LLM settings."
+            exit 1
+        fi
+        cd integration_tests && pytest -c pytest.ini
+        ;;
     lint)
         echo "Running linter (ruff) without applying fixes..."
         ruff check . --exclude venv
@@ -18,7 +27,7 @@ case "$1" in
         ruff check . --fix --exclude venv
         ;;
     *)
-        echo "Usage: ./doit.sh {test|lint|lint-fix}"
+        echo "Usage: ./doit.sh {test|integration-test|lint|lint-fix}"
         exit 1
         ;;
 esac
