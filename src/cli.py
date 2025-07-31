@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import List, Dict, Any, Optional
+from typing import List, Any
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -87,25 +87,23 @@ class RAGCLI:
                 "- /bye - Exit the chatbot\n"
                 "- /doc <number> - View detailed document content")
 
-    def _display_welcome(self):
-        """Display welcome message."""
+    def _display_panel_message(self, message: str, title: str, border_style: str = "blue"):
+        """Helper method to display a message within a rich.panel.Panel."""
         panel = Panel(
-            self._get_help_text(),
-            title="RAG CLI Chatbot",
-            border_style="blue"
+            message,
+            title=title,
+            border_style=border_style
         )
         self.console.print(panel)
         self.console.print()
+
+    def _display_welcome(self):
+        """Display welcome message."""
+        self._display_panel_message(self._get_help_text(), "RAG CLI Chatbot")
     
     def _display_help(self):
         """Display help message."""
-        panel = Panel(
-            self._get_help_text(),
-            title="RAG CLI Chatbot Help",
-            border_style="blue"
-        )
-        self.console.print(panel)
-        self.console.print()
+        self._display_panel_message(self._get_help_text(), "RAG CLI Chatbot Help")
 
     def _display_info(self):
         """Display system configuration information."""
@@ -404,7 +402,7 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 else:
                     size_display = f"{size_bytes} bytes"
                 metadata_table.add_row("File Size:", size_display)
-            except:
+            except Exception:
                 pass
         
         # Create simple metadata display
@@ -525,7 +523,7 @@ Is there anything else I can help you with, or would you like to rephrase your q
                     response = self.llm_client.get_llm_response(self.conversation_history)
                     
                     # Display response
-                    self.console.print(f"\n[bold green]Assistant:[/bold green]")
+                    self.console.print("\n[bold green]Assistant:[/bold green]")
                     self.console.print(Markdown(response))
                     
                     # Add assistant response to history

@@ -174,6 +174,20 @@ pytest
 
 This will discover and run all tests in the `tests/` directory. For more detailed output, you can use `pytest -v`.
 
+## 🛠️ Development Commands
+
+For common development tasks, use the `doit.sh` script:
+
+```bash
+./doit.sh <command>
+```
+
+Available commands:
+
+- `test`: Runs the `pytest` test suite.
+- `lint`: Runs the `ruff` linter without applying fixes.
+- `lint-fix`: Runs the `ruff` linter and attempts to auto-fix issues.
+
 ## 📁 Project Structure
 
 ```

@@ -3,10 +3,9 @@ Unit tests for CLI logic with mocked dependencies.
 Tests the core RAG logic without requiring external services.
 """
 
-import pytest
 import sys
 import os
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from cli import RAGCLI
@@ -31,13 +30,13 @@ def test_rag_trigger_detection():
         cli.trigger_phrase = "@knowledgebase"
         
         # Test positive cases
-        assert cli._detect_rag_trigger("@knowledgebase what is Python?") == True
-        assert cli._detect_rag_trigger("Can you @knowledgebase tell me about AI?") == True
-        assert cli._detect_rag_trigger("@KNOWLEDGEBASE search") == True  # Case insensitive
+        assert cli._detect_rag_trigger("@knowledgebase what is Python?")
+        assert cli._detect_rag_trigger("Can you @knowledgebase tell me about AI?")
+        assert cli._detect_rag_trigger("@KNOWLEDGEBASE search")  # Case insensitive
         
         # Test negative cases
-        assert cli._detect_rag_trigger("What is Python?") == False
-        assert cli._detect_rag_trigger("Tell me about AI") == False
+        assert not cli._detect_rag_trigger("What is Python?")
+        assert not cli._detect_rag_trigger("Tell me about AI")
 
 def test_rag_context_decision():
     """Test decision logic for using RAG context."""
@@ -56,17 +55,17 @@ def test_rag_context_decision():
             MockScoredPoint(0.85, {"content": "Test content"}),
             MockScoredPoint(0.75, {"content": "More content"})
         ]
-        assert cli._should_use_rag_context(high_score_results) == True
+        assert cli._should_use_rag_context(high_score_results)
         
         # Test with low score results
         low_score_results = [
             MockScoredPoint(0.65, {"content": "Test content"}),
             MockScoredPoint(0.55, {"content": "More content"})
         ]
-        assert cli._should_use_rag_context(low_score_results) == False
+        assert not cli._should_use_rag_context(low_score_results)
         
         # Test with empty results
-        assert cli._should_use_rag_context([]) == False
+        assert not cli._should_use_rag_context([])
 
 def test_conversation_history_management():
     """Test conversation history length management."""

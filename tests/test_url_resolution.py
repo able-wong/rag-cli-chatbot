@@ -5,7 +5,7 @@ Tests the _resolve_source_url method with various URL formats.
 """
 
 import unittest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch
 import os
 import sys
 

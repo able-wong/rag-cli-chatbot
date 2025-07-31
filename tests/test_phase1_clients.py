@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from embedding_client import EmbeddingClient
 from qdrant_db import QdrantDB
 from llm_client import LLMClient
-from config_manager import ConfigManager
 from logging_config import setup_logging
 
 def test_embedding_client_sentence_transformers():
@@ -30,7 +29,7 @@ def test_embedding_client_sentence_transformers():
         
         # Test embedding generation
         test_text = "This is a test sentence for embedding generation."
-        embedding = client.get_embedding(test_text)
+        client.get_embedding(test_text)
         
         # Verify embedding generation
         

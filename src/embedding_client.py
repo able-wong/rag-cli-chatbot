@@ -6,6 +6,7 @@ import sys
 import contextlib
 from typing import List, Dict, Any
 import google.generativeai as genai
+from sentence_transformers import SentenceTransformer
 
 # Suppress sentence-transformers and transformers warnings and progress bars
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -27,8 +28,6 @@ def suppress_stdout_stderr():
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
-
-from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
