@@ -147,31 +147,17 @@ Assistant: Based on the knowledge base, Python is a high-level programming langu
 
 ## 🧪 Testing
 
-### Run All Tests
+To run the full test suite, use `pytest`:
 
 ```bash
 # Activate virtual environment
 source venv/bin/activate
 
-# Run configuration tests
-python3 tests/test_config_manager.py
-
-# Run Phase 1 integration tests
-python3 tests/test_phase1_clients.py
-
-# Run CLI unit tests (mocked)
-python3 tests/test_cli_mocked.py
+# Run all tests
+pytest
 ```
 
-### Test Individual Components
-
-```bash
-# Test configuration loading
-python3 tests/test_config_manager.py
-
-# Test embedding client
-python3 tests/test_phase1_clients.py
-```
+This will discover and run all tests in the `tests/` directory. For more detailed output, you can use `pytest -v`.
 
 ## 📁 Project Structure
 

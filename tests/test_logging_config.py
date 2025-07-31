@@ -4,7 +4,7 @@ Unit tests for logging configuration functionality.
 Tests the logging_config module with various configurations.
 """
 
-import unittest
+import pytest
 from unittest.mock import Mock, patch, MagicMock, mock_open
 import logging
 import logging.handlers
@@ -19,79 +19,79 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 from logging_config import setup_logging, _parse_file_size, _create_log_handler
 
 
-class TestFileSizeParsing(unittest.TestCase):
+class TestFileSizeParsing:
     """Test cases for file size parsing functionality."""
 
     def test_kilobyte_parsing(self):
         """Test parsing of KB values."""
-        self.assertEqual(_parse_file_size("1KB"), 1024)
-        self.assertEqual(_parse_file_size("10KB"), 10 * 1024)
-        self.assertEqual(_parse_file_size("2.5KB"), int(2.5 * 1024))
+        assert _parse_file_size("1KB") == 1024
+        assert _parse_file_size("10KB") == 10 * 1024
+        assert _parse_file_size("2.5KB") == int(2.5 * 1024)
 
     def test_megabyte_parsing(self):
         """Test parsing of MB values."""
-        self.assertEqual(_parse_file_size("1MB"), 1024 * 1024)
-        self.assertEqual(_parse_file_size("10MB"), 10 * 1024 * 1024)
-        self.assertEqual(_parse_file_size("2.5MB"), int(2.5 * 1024 * 1024))
+        assert _parse_file_size("1MB") == 1024 * 1024
+        assert _parse_file_size("10MB") == 10 * 1024 * 1024
+        assert _parse_file_size("2.5MB") == int(2.5 * 1024 * 1024)
 
     def test_gigabyte_parsing(self):
         """Test parsing of GB values."""
-        self.assertEqual(_parse_file_size("1GB"), 1024 * 1024 * 1024)
-        self.assertEqual(_parse_file_size("2GB"), 2 * 1024 * 1024 * 1024)
+        assert _parse_file_size("1GB") == 1024 * 1024 * 1024
+        assert _parse_file_size("2GB") == 2 * 1024 * 1024 * 1024
 
     def test_bytes_parsing(self):
         """Test parsing of byte values without units."""
-        self.assertEqual(_parse_file_size("5000"), 5000)
-        self.assertEqual(_parse_file_size("1024"), 1024)
+        assert _parse_file_size("5000") == 5000
+        assert _parse_file_size("1024") == 1024
 
     def test_case_insensitive_parsing(self):
         """Test that parsing is case insensitive."""
-        self.assertEqual(_parse_file_size("1kb"), 1024)
-        self.assertEqual(_parse_file_size("1Mb"), 1024 * 1024)
-        self.assertEqual(_parse_file_size("1gb"), 1024 * 1024 * 1024)
+        assert _parse_file_size("1kb") == 1024
+        assert _parse_file_size("1Mb") == 1024 * 1024
+        assert _parse_file_size("1gb") == 1024 * 1024 * 1024
 
     def test_whitespace_handling(self):
         """Test that whitespace is handled properly."""
-        self.assertEqual(_parse_file_size(" 1MB "), 1024 * 1024)
-        self.assertEqual(_parse_file_size("  10KB  "), 10 * 1024)
+        assert _parse_file_size(" 1MB ") == 1024 * 1024
+        assert _parse_file_size("  10KB  ") == 10 * 1024
 
 
-class TestLogHandlerCreation(unittest.TestCase):
+class TestLogHandlerCreation:
     """Test cases for log handler creation."""
 
     def test_null_handler_creation(self):
         """Test creation of null handler for 'none' output."""
         config = {'output': 'none'}
         handler = _create_log_handler(config)
-        self.assertIsInstance(handler, logging.NullHandler)
+        assert isinstance(handler, logging.NullHandler)
 
     def test_console_handler_creation(self):
         """Test creation of console handler."""
         config = {'output': 'console'}
         handler = _create_log_handler(config)
-        self.assertIsInstance(handler, logging.StreamHandler)
-        self.assertEqual(handler.stream, sys.stdout)
+        assert isinstance(handler, logging.StreamHandler)
+        assert handler.stream == sys.stdout
 
     def test_stderr_handler_creation(self):
         """Test creation of stderr handler."""
         config = {'output': 'stderr'}
         handler = _create_log_handler(config)
-        self.assertIsInstance(handler, logging.StreamHandler)
-        self.assertEqual(handler.stream, sys.stderr)
+        assert isinstance(handler, logging.StreamHandler)
+        assert handler.stream == sys.stderr
 
     def test_default_handler_creation(self):
         """Test default handler creation (should be stderr)."""
         config = {}
         handler = _create_log_handler(config)
-        self.assertIsInstance(handler, logging.StreamHandler)
-        self.assertEqual(handler.stream, sys.stderr)
+        assert isinstance(handler, logging.StreamHandler)
+        assert handler.stream == sys.stderr
 
     def test_unknown_output_type(self):
         """Test that unknown output types default to stderr."""
         config = {'output': 'unknown_type'}
         handler = _create_log_handler(config)
-        self.assertIsInstance(handler, logging.StreamHandler)
-        self.assertEqual(handler.stream, sys.stderr)
+        assert isinstance(handler, logging.StreamHandler)
+        assert handler.stream == sys.stderr
 
     @patch('os.makedirs')
     @patch('os.path.exists')
@@ -116,9 +116,9 @@ class TestLogHandlerCreation(unittest.TestCase):
         mock_makedirs.assert_called_once_with('logs', exist_ok=True)
         
         # Should be a RotatingFileHandler
-        self.assertIsInstance(handler, logging.handlers.RotatingFileHandler)
-        self.assertEqual(handler.maxBytes, 5 * 1024 * 1024)
-        self.assertEqual(handler.backupCount, 3)
+        assert isinstance(handler, logging.handlers.RotatingFileHandler)
+        assert handler.maxBytes == 5 * 1024 * 1024
+        assert handler.backupCount == 3
 
     @patch('os.makedirs')
     @patch('os.path.exists')
@@ -135,21 +135,21 @@ class TestLogHandlerCreation(unittest.TestCase):
         mock_makedirs.assert_not_called()
         
         # Should use defaults
-        self.assertIsInstance(handler, logging.handlers.RotatingFileHandler)
-        self.assertEqual(handler.maxBytes, 10 * 1024 * 1024)  # Default 10MB
-        self.assertEqual(handler.backupCount, 5)  # Default 5 backups
+        assert isinstance(handler, logging.handlers.RotatingFileHandler)
+        assert handler.maxBytes == 10 * 1024 * 1024  # Default 10MB
+        assert handler.backupCount == 5  # Default 5 backups
 
 
-class TestLoggingSetup(unittest.TestCase):
+class TestLoggingSetup:
     """Test cases for complete logging setup."""
 
-    def setUp(self):
+    def setup_method(self):
         """Set up test fixtures."""
         # Store the original root logger state
         self.original_handlers = logging.getLogger().handlers[:]
         self.original_level = logging.getLogger().level
 
-    def tearDown(self):
+    def teardown_method(self):
         """Clean up after tests."""
         # Restore original root logger state
         root_logger = logging.getLogger()
@@ -170,24 +170,24 @@ class TestLoggingSetup(unittest.TestCase):
         setup_logging(config)
         
         root_logger = logging.getLogger()
-        self.assertEqual(root_logger.level, logging.DEBUG)
-        self.assertEqual(len(root_logger.handlers), 1)
+        assert root_logger.level == logging.DEBUG
+        assert len(root_logger.handlers) == 1
         
         handler = root_logger.handlers[0]
-        self.assertIsInstance(handler, logging.StreamHandler)
-        self.assertEqual(handler.level, logging.DEBUG)
+        assert isinstance(handler, logging.StreamHandler)
+        assert handler.level == logging.DEBUG
 
     def test_default_configuration(self):
         """Test setup with no configuration (should use defaults)."""
         setup_logging()
         
         root_logger = logging.getLogger()
-        self.assertEqual(root_logger.level, logging.INFO)
-        self.assertEqual(len(root_logger.handlers), 1)
+        assert root_logger.level == logging.INFO
+        assert len(root_logger.handlers) == 1
         
         handler = root_logger.handlers[0]
-        self.assertIsInstance(handler, logging.StreamHandler)
-        self.assertEqual(handler.stream, sys.stderr)
+        assert isinstance(handler, logging.StreamHandler)
+        assert handler.stream == sys.stderr
 
     def test_invalid_log_level(self):
         """Test handling of invalid log levels."""
@@ -195,7 +195,7 @@ class TestLoggingSetup(unittest.TestCase):
         setup_logging(config)
         
         root_logger = logging.getLogger()
-        self.assertEqual(root_logger.level, logging.INFO)  # Should default to INFO
+        assert root_logger.level == logging.INFO  # Should default to INFO
 
     def test_handler_replacement(self):
         """Test that existing handlers are replaced."""
@@ -207,9 +207,9 @@ class TestLoggingSetup(unittest.TestCase):
         setup_logging({'output': 'stderr'})
         
         # Should have exactly one handler after setup
-        self.assertEqual(len(logging.getLogger().handlers), 1)
+        assert len(logging.getLogger().handlers) == 1
         # Should not be the dummy handler
-        self.assertNotIn(dummy_handler, logging.getLogger().handlers)
+        assert dummy_handler not in logging.getLogger().handlers
 
     def test_custom_formatter(self):
         """Test custom formatter configuration."""
@@ -230,7 +230,7 @@ class TestLoggingSetup(unittest.TestCase):
         )
         
         formatted = formatter.format(record)
-        self.assertTrue(formatted.startswith('CUSTOM: test message'))
+        assert formatted.startswith('CUSTOM: test message')
 
     @patch('logging_config._create_log_handler')
     def test_specific_logger_configuration(self, mock_create_handler):
@@ -252,19 +252,19 @@ class TestLoggingSetup(unittest.TestCase):
         test_logger = logging.getLogger('test.logger')
         another_logger = logging.getLogger('another.logger')
         
-        self.assertEqual(test_logger.level, logging.DEBUG)
-        self.assertEqual(another_logger.level, logging.WARNING)
+        assert test_logger.level == logging.DEBUG
+        assert another_logger.level == logging.WARNING
 
 
-class TestLoggingIntegration(unittest.TestCase):
+class TestLoggingIntegration:
     """Integration tests for logging functionality."""
 
-    def setUp(self):
+    def setup_method(self):
         """Set up test fixtures."""
         self.temp_dir = tempfile.mkdtemp()
         self.log_file = os.path.join(self.temp_dir, 'test.log')
 
-    def tearDown(self):
+    def teardown_method(self):
         """Clean up test fixtures."""
         shutil.rmtree(self.temp_dir, ignore_errors=True)
         
@@ -300,13 +300,13 @@ class TestLoggingIntegration(unittest.TestCase):
                 handler.flush()
         
         # Check that log file was created and contains messages
-        self.assertTrue(os.path.exists(self.log_file))
+        assert os.path.exists(self.log_file)
         
         with open(self.log_file, 'r') as f:
             content = f.read()
-            self.assertIn('INFO: Test message 1', content)
-            self.assertIn('WARNING: Test message 2', content)
-            self.assertIn('ERROR: Test message 3', content)
+            assert 'INFO: Test message 1' in content
+            assert 'WARNING: Test message 2' in content
+            assert 'ERROR: Test message 3' in content
 
     def test_console_output_integration(self):
         """Test console output integration."""
@@ -328,7 +328,7 @@ class TestLoggingIntegration(unittest.TestCase):
                     handler.flush()
             
             # Check that stdout was used
-            self.assertTrue(mock_stdout.write.called)
+            assert mock_stdout.write.called
 
     def test_null_handler_integration(self):
         """Test that null handler properly discards messages."""
@@ -344,10 +344,7 @@ class TestLoggingIntegration(unittest.TestCase):
         
         # Verify null handler is in use
         root_logger = logging.getLogger()
-        self.assertEqual(len(root_logger.handlers), 1)
-        self.assertIsInstance(root_logger.handlers[0], logging.NullHandler)
+        assert len(root_logger.handlers) == 1
+        assert isinstance(root_logger.handlers[0], logging.NullHandler)
 
 
-if __name__ == '__main__':
-    # Run with verbose output
-    unittest.main(verbosity=2)

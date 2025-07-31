@@ -4,3 +4,4 @@ requests>=2.31.0
 rich>=13.0.0
 sentence-transformers>=2.2.0
 google-generativeai>=0.3.0
+pytest>=8.0.0

@@ -1,8 +1,10 @@
-# import pytest
+import pytest
 import tempfile
 import os
 import yaml
-from src.config_manager import ConfigManager
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+from config_manager import ConfigManager
 
 def test_config_manager_loads_yaml():
     """Test that ConfigManager correctly loads YAML configuration."""
@@ -69,8 +71,3 @@ def test_config_manager_get_with_default():
     finally:
         os.unlink(temp_path)
 
-if __name__ == "__main__":
-    test_config_manager_loads_yaml()
-    test_config_manager_env_override()
-    test_config_manager_get_with_default()
-    print("All tests passed!")
