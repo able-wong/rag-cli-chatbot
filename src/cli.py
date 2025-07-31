@@ -75,18 +75,97 @@ class RAGCLI:
         ]
         logger.info("Conversation initialized with system prompt")
     
+    def _get_help_text(self) -> str:
+        """Return the help text string."""
+        return ("🤖 Welcome to RAG CLI Chatbot!\n\n"
+                "Commands:\n"
+                "- Type normally for general chat\n"
+                "- Use @knowledgebase to search the knowledge base\n"
+                "- /clear - Clear conversation history\n"
+                "- /help - Display this help message\n"
+                "- /info - Display system configuration\n"
+                "- /bye - Exit the chatbot\n"
+                "- /doc <number> - View detailed document content")
+
     def _display_welcome(self):
         """Display welcome message."""
-        welcome_msg = self.cli_config.get('welcome_message', 
-            "🤖 Welcome to RAG CLI Chatbot!\n\nCommands:\n- Type normally for general chat\n- Use @knowledgebase to search the knowledge base\n- /clear - Clear conversation history\n- /bye - Exit the chatbot\n- /doc <number> - View detailed document content")
-        
         panel = Panel(
-            welcome_msg,
+            self._get_help_text(),
             title="RAG CLI Chatbot",
             border_style="blue"
         )
         self.console.print(panel)
         self.console.print()
+    
+    def _display_help(self):
+        """Display help message."""
+        panel = Panel(
+            self._get_help_text(),
+            title="RAG CLI Chatbot Help",
+            border_style="blue"
+        )
+        self.console.print(panel)
+        self.console.print()
+
+    def _display_info(self):
+        """Display system configuration information."""
+        
+        table = Table(show_header=False, box=None, padding=(0, 1))
+        table.add_column("Category", style="bold blue", width=20)
+        table.add_column("Setting", style="bold cyan", width=25)
+        table.add_column("Value", style="white")
+
+        # LLM Info
+        llm_provider = self.config_manager.get('llm.provider', 'N/A')
+        llm_model = self.config_manager.get(f'llm.{llm_provider}.model', self.config_manager.get('llm.model', 'N/A'))
+        
+        table.add_row("LLM", "Provider", llm_provider)
+        table.add_row("", "Model", llm_model)
+        
+        # Embedding Info
+        embedding_provider = self.config_manager.get('embedding.provider', 'N/A')
+        embedding_model = self.config_manager.get(f'embedding.{embedding_provider}.model', self.config_manager.get('embedding.model', 'N/A'))
+        
+        table.add_row("Embedding", "Provider", embedding_provider)
+        table.add_row("", "Model", embedding_model)
+        
+        # Vector DB Info
+        vector_db_provider = self.config_manager.get('vector_db.provider', 'N/A')
+        table.add_row("Vector DB", "Provider", vector_db_provider)
+        
+        if self.config_manager.get('vector_db.url'):
+            db_location = self.config_manager.get('vector_db.url')
+            table.add_row("", "URL", db_location)
+        else:
+            db_location = f"{self.config_manager.get('vector_db.host', 'N/A')}:{self.config_manager.get('vector_db.port', 'N/A')}"
+            table.add_row("", "Location", db_location)
+        
+        collection_name = self.config_manager.get('vector_db.collection_name', 'N/A')
+        table.add_row("", "Collection", collection_name)
+
+        # rag settings
+        table.add_row("RAG", "top_k", str(self.config_manager.get('rag.top_k', 'N/A')))
+        table.add_row("", "min_score", str(self.config_manager.get('rag.min_score', 'N/A')))
+        table.add_row("", "system_prompt", str(self.config_manager.get('rag.system_prompt', 'N/A')))
+
+        # Logging Info
+        logging_output = self.config_manager.get('logging.output', 'N/A')
+        table.add_row("Logging", "Output", logging_output)
+        if logging_output == 'file':
+            log_path = self.config_manager.get('logging.file.path', 'N/A')
+            table.add_row("", "Log Path", log_path)
+
+        # Documents Info
+        doc_root = self.config_manager.get('documents.root_path', 'N/A')
+        table.add_row("Documents", "Root Path", doc_root)
+
+        panel = Panel(
+            table,
+            title="System Configuration",
+            border_style="green",
+            expand=False
+        )
+        self.console.print(panel)
     
     def _detect_rag_trigger(self, user_input: str) -> bool:
         """Check if user input contains RAG trigger phrase."""
@@ -368,6 +447,14 @@ Is there anything else I can help you with, or would you like to rephrase your q
         elif user_input == '/clear':
             self._initialize_conversation()
             self.console.print("🧹 [green]Conversation history cleared[/green]")
+            return False
+        
+        elif user_input == '/help':
+            self._display_help()
+            return False
+        
+        elif user_input == '/info':
+            self._display_info()
             return False
         
         elif user_input.startswith('/doc '):
