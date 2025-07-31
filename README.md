@@ -185,6 +185,7 @@ For common development tasks, use the `doit.sh` script:
 Available commands:
 
 - `test`: Runs the `pytest` test suite.
+- `integration-test`: Runs integration tests with real LLM providers (requires valid config.yaml).
 - `lint`: Runs the `ruff` linter without applying fixes.
 - `lint-fix`: Runs the `ruff` linter and attempts to auto-fix issues.
 
@@ -197,17 +198,23 @@ rag-cli-chatbot/
 │   ├── config_manager.py  # Configuration management
 │   ├── embedding_client.py # Embedding generation
 │   ├── llm_client.py      # LLM interaction
+│   ├── query_rewriter.py  # LLM-based query transformation
 │   ├── qdrant_db.py       # Vector database client
 │   └── logging_config.py  # Logging setup
 ├── config/                # Configuration files
 │   ├── config.sample.yaml # Sample configuration template
 │   └── config.yaml        # Main configuration (user-created)
-├── tests/                 # Test files
+├── tests/                 # Unit tests
 │   ├── test_config_manager.py
 │   ├── test_phase1_clients.py
-│   └── test_cli_moked.py
+│   ├── test_query_rewriter.py
+│   └── test_cli_mocked.py
+├── integration_tests/     # Integration tests with real LLM providers
+│   ├── test_query_rewriter_integration.py
+│   └── test_cli_integration.py
 ├── main.py               # Application entry point
 ├── requirements.txt      # Python dependencies
+├── doit.sh              # Development commands
 └── README.md            # This file
 ```
 
@@ -218,6 +225,7 @@ rag-cli-chatbot/
 - ✅ **Phase 0**: Project setup, configuration, logging
 - ✅ **Phase 1**: Core service integration (LLM, Embeddings, Qdrant)
 - ✅ **Phase 2**: MVP CLI with RAG and fallback logic
+- ✅ **Phase 3**: LLM-based query transformation and routing
 
 ### Key Features Implemented
 
@@ -226,19 +234,21 @@ rag-cli-chatbot/
 - [x] Multiple embedding providers (SentenceTransformers, Ollama, Gemini) 
 - [x] Qdrant vector database integration
 - [x] RAG trigger detection (@knowledgebase)
+- [x] LLM-based query transformation for improved search accuracy
+- [x] Structured prompt generation with context instructions
 - [x] Confidence-based fallback system
 - [x] Rich CLI interface with formatted output
 - [x] Conversation history management
 - [x] Document detail viewing
-- [x] Comprehensive test suite
+- [x] Comprehensive test suite with integration tests
 
 ## 🔮 Future Enhancements
 
 - **Document Ingestion Pipeline**: Automated document processing and chunking
-- **Query Rewriting**: LLM-based query enhancement
+- **Hypothetical Document Embeddings (HyDE)**: Generate hypothetical answers for improved retrieval
 - **Hybrid Search**: Combine vector and keyword search
 - **Re-ranking**: Advanced result scoring and ordering
-- **Implicit RAG**: Automatic knowledge base routing
+- **Implicit RAG**: Automatic knowledge base routing without trigger phrases
 - **Web Interface**: Browser-based chat interface
 
 ## 🐛 Troubleshooting

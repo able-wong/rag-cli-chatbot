@@ -563,7 +563,8 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 self.conversation_history.append({"role": "user", "content": prompt})
                 
                 # Get LLM response
-                self.console.print("🤖 [dim]Thinking...[/dim]")
+                llm_prompt_display = query_analysis['llm_query'][:80] + "..." if len(query_analysis['llm_query']) > 80 else query_analysis['llm_query']
+                self.console.print(f"🤖 [dim]Thinking with LLM prompt '{llm_prompt_display}'...[/dim]")
                 try:
                     response = self.llm_client.get_llm_response(self.conversation_history)
                     
