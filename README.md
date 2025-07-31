@@ -111,6 +111,21 @@ vector_db:
   api_key: "your-api-key"  # Or set QDRANT_API_KEY env var
 ```
 
+### Qdrant collection "documents" Schema Keys:
+
+- **chunk_text**: The actual text content of the chunk
+- **original_text**: Original unprocessed document text
+- **chunk_index**: Sequential index of this chunk within the document
+- **source_url**: Source URL with protocol (e.g., file:documents/article.pdf, https://example.com/doc.html)
+- **file_extension**: File extension (e.g., .pdf, .html, .txt)
+- **file_size**: File size in bytes
+- **last_modified**: Last modification timestamp (ISO format)
+- **content_hash**: SHA256 hash of document content
+- **author**: Author name extracted from content or source URL path (string or null)
+- **title**: Document title from content or cleaned filename (string)
+- **publication_date**: Publication date in YYYY-MM-DD format (ISO string or null)
+- **tags**: Array of relevant keywords/topics from content (array of strings)
+
 ## 🎮 Usage
 
 ### Basic Commands
