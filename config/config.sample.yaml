@@ -1,0 +1,146 @@
+# RAG CLI Chatbot Configuration
+# Copy this file to config.yaml and customize for your setup
+
+# ============================================================================
+# LLM CONFIGURATION
+# ============================================================================
+llm:
+  # PROVIDER SELECTION: Choose "ollama" or "gemini"
+  provider: "ollama"  # Options: "ollama", "gemini"
+  
+  # OLLAMA SETTINGS (Local LLM server)
+  # Use these settings when provider = "ollama"
+  model: "llama3.2:3b"                  # Model name in Ollama
+  base_url: "http://localhost:11434"    # Ollama server URL
+  timeout: 120                          # Request timeout in seconds
+  
+  # GENERATION PARAMETERS
+  temperature: 0.7                      # Randomness (0.0 = deterministic, 1.0 = creative)
+  top_p: 0.9                           # Nucleus sampling
+  top_k: 40                            # Top-k sampling
+  max_tokens: 2048                     # Maximum response length
+  
+  # GEMINI SETTINGS (Google Cloud API)
+  # Use these settings when provider = "gemini"
+  # Uncomment and configure when switching to Gemini:
+  gemini:
+    api_key: "your-gemini-api-key-here"  # Your Gemini API key (or use GEMINI_API_KEY env var)
+    model: "gemini-1.5-flash"            # Gemini model name
+    
+# ============================================================================
+# EMBEDDING CONFIGURATION
+# ============================================================================
+embedding:
+  # PROVIDER SELECTION: Choose "ollama", "gemini", or "sentence_transformers"
+  provider: "sentence_transformers"  # Options: "ollama", "gemini", "sentence_transformers"
+  
+  # OLLAMA SETTINGS (Local embedding server)
+  model: "nomic-embed-text"             # Recommended: 768 dimensions
+  base_url: "http://localhost:11434"    # Ollama server URL
+  timeout: 60                           # Request timeout in seconds
+  
+  # GEMINI SETTINGS (Google Cloud API)
+  gemini:
+    api_key: "your-gemini-api-key-here"  # Your Gemini API key (or use GEMINI_API_KEY env var)
+    model: "text-embedding-004"          # Google's embedding model (768 dimensions)
+  
+  # SENTENCE TRANSFORMERS SETTINGS (Local Python library)
+  sentence_transformers:
+    model: "all-MiniLM-L6-v2"           # Lightweight model: 384 dimensions
+    device: "cpu"                       # Options: "cpu", "cuda", "mps"
+
+# ============================================================================
+# VECTOR DATABASE CONFIGURATION
+# ============================================================================
+vector_db:
+  provider: "qdrant"                    # Vector database type
+  
+  # LOCAL QDRANT SETTINGS
+  host: "localhost"                     # Qdrant server host
+  port: 6333                           # Qdrant server port
+  
+  # QDRANT CLOUD SETTINGS (Takes precedence if url is provided)
+  # Uncomment for Qdrant Cloud:
+  # url: "your-qdrant-cloud-url-here"    # Your Qdrant Cloud URL
+  # api_key: "your-qdrant-api-key-here"  # Your Qdrant Cloud API key (or use QDRANT_API_KEY env var)
+  
+  # COLLECTION SETTINGS
+  collection_name: "documents"          # Collection name for storing embeddings
+  distance_metric: "cosine"             # Similarity metric
+
+# ============================================================================
+# RAG CONFIGURATION
+# ============================================================================
+rag:
+  # TRIGGER SETTINGS
+  trigger_phrase: "@knowledgebase"      # Phrase to trigger RAG search
+  
+  # SEARCH SETTINGS
+  top_k: 10                             # Number of documents to retrieve
+  min_score: 0.3                       # Minimum similarity score threshold
+  
+  # CONTEXT SETTINGS
+  max_context_length: 8000             # Maximum characters in RAG context
+  
+  # SYSTEM PROMPT
+  system_prompt: |
+    You are a helpful AI assistant with access to a knowledge base. 
+    When provided with context from the knowledge base, use it to answer questions accurately.
+    If the context doesn't contain relevant information, clearly state that you cannot answer based on the available knowledge base.
+    Never make up information that isn't in the provided context.
+
+# ============================================================================
+# DOCUMENT CONFIGURATION
+# ============================================================================
+documents:
+  # LOCAL DOCUMENT ROOT
+  root_path: "/path/to/your/documents"  # Base path for local document files
+  # Examples:
+  # root_path: "/Users/username/Documents/knowledge_base"
+  # root_path: "/home/user/documents"
+
+# ============================================================================
+# CLI CONFIGURATION
+# ============================================================================
+cli:
+  # DISPLAY SETTINGS
+  show_rag_results: true               # Show retrieved documents after RAG queries
+  show_scores: true                    # Show similarity scores in results
+  
+  # CONVERSATION SETTINGS
+  max_history_length: 20               # Maximum conversation turns to keep
+  
+  # WELCOME MESSAGE
+  welcome_message: |
+    🤖 Welcome to RAG CLI Chatbot!
+    
+    Commands:
+    - Type normally for general chat
+    - Use @knowledgebase to search the knowledge base
+    - /clear - Clear conversation history
+    - /bye - Exit the chatbot
+    - /doc <number> - View detailed document content
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
+logging:
+  # LOG LEVEL
+  level: "INFO"                        # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  
+  # OUTPUT DESTINATION
+  output: "file"                       # Options: "console", "file", "stderr", "none"
+  # - "console": Output to stdout (mixes with chat, good for development)
+  # - "file": Output to log file (clean chat interface, good for production)
+  # - "stderr": Output to stderr (separates from chat output)
+  # - "none": Disable logging output (quiet mode)
+  
+  # FILE LOGGING SETTINGS (used when output = "file")
+  file:
+    path: "logs/rag-cli.log"           # Log file path (relative to project root)
+    max_size: "10MB"                   # Max file size before rotation
+    backup_count: 5                    # Number of backup files to keep
+    
+  # LOG FORMAT
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"  # Log message format
+  date_format: "%Y-%m-%d %H:%M:%S"     # Timestamp format
