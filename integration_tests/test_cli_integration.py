@@ -55,7 +55,7 @@ class TestCLIIntegration:
         result = cli._analyze_and_transform_query(general_query)
         
         assert result['search_rag'] is False, "Should not detect RAG trigger"
-        assert len(result['embedding_source_text']) > 0, "Should have embedding text"
+        assert isinstance(result['embedding_source_text'], str), "Should have embedding text field"
         assert len(result['llm_query']) > 0, "Should have LLM query"
         assert 'context' not in result['llm_query'].lower(), "Non-RAG query should not reference context"
         

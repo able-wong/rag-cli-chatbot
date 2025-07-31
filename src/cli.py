@@ -75,13 +75,15 @@ class RAGCLI:
     
     def _initialize_conversation(self):
         """Initialize conversation with system prompt."""
-        system_prompt = self.rag_config.get('system_prompt', 
-            "You are a helpful AI assistant with access to a knowledge base.")
+        # Use configurable system prompt from config
+        system_prompt = self.cli_config.get('system_prompt', 
+            "You are a helpful AI assistant. Follow the task instructions carefully and use the specified context source as directed. "
+            "If you don't know the answer based on the specified context or from conversation history, you can say you don't know.")
         
         self.conversation_history = [
             {"role": "system", "content": system_prompt}
         ]
-        logger.info("Conversation initialized with system prompt")
+        logger.info("Conversation initialized with configurable system prompt")
     
     def _get_help_text(self) -> str:
         """Return the help text string."""

@@ -335,3 +335,89 @@ def test_query_cleaning_in_fallback():
     assert result['search_rag'] is True
     assert result['embedding_source_text'] == "What is machine learning?"
     assert result['llm_query'] == "@knowledgebase    What is machine learning?   "
+
+def test_conversational_follow_up_detection():
+    """Test detection of conversational follow-up queries."""
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock response for conversational follow-up
+    mock_response = {
+        "search_rag": False,
+        "embedding_source_text": "",
+        "llm_query": "Tell me more about the automation benefits based on context in previous conversation."
+    }
+    mock_llm.get_llm_response.return_value = json.dumps(mock_response)
+    
+    result = rewriter.transform_query("Tell me more about the automation benefits")
+    
+    assert result['search_rag'] is False
+    assert result['embedding_source_text'] == ""
+    assert "based on context in previous conversation" in result['llm_query']
+
+def test_referential_query_detection():
+    """Test detection of queries with referential language."""
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Test various referential patterns
+    test_cases = [
+        ("Can you elaborate on that approach?", "elaborate on that approach based on context in previous conversation"),
+        ("What about the other method you mentioned?", "explain the other method based on context in previous conversation"),
+        ("How does it compare to traditional methods?", "compare it to traditional methods based on context in previous conversation")
+    ]
+    
+    for query, expected_context_ref in test_cases:
+        mock_response = {
+            "search_rag": False,
+            "embedding_source_text": "",
+            "llm_query": expected_context_ref.capitalize() + "."
+        }
+        mock_llm.get_llm_response.return_value = json.dumps(mock_response)
+        
+        result = rewriter.transform_query(query)
+        
+        assert result['search_rag'] is False
+        assert "based on context in previous conversation" in result['llm_query']
+
+def test_general_question_no_context_reference():
+    """Test that general questions don't reference context."""
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock response for general question
+    mock_response = {
+        "search_rag": False,
+        "embedding_source_text": "",
+        "llm_query": "What is the capital of France?"
+    }
+    mock_llm.get_llm_response.return_value = json.dumps(mock_response)
+    
+    result = rewriter.transform_query("What is the capital of France?")
+    
+    assert result['search_rag'] is False
+    assert result['embedding_source_text'] == ""
+    assert "context" not in result['llm_query']
+
+def test_rag_query_still_uses_provided_context():
+    """Test that RAG queries still use 'provided context' instruction."""
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock response for RAG query
+    mock_response = {
+        "search_rag": True,
+        "embedding_source_text": "machine learning benefits applications",
+        "llm_query": "Explain machine learning benefits based on the provided context."
+    }
+    mock_llm.get_llm_response.return_value = json.dumps(mock_response)
+    
+    result = rewriter.transform_query("@knowledgebase What are the benefits of machine learning?")
+    
+    assert result['search_rag'] is True
+    assert len(result['embedding_source_text']) > 0
+    assert "based on the provided context" in result['llm_query']

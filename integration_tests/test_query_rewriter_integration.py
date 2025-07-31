@@ -44,7 +44,11 @@ class TestQueryRewriterIntegration:
         if not isinstance(result['search_rag'], bool):
             return False
         
-        if not isinstance(result['embedding_source_text'], str) or not result['embedding_source_text'].strip():
+        if not isinstance(result['embedding_source_text'], str):
+            return False
+        
+        # embedding_source_text can be empty for non-RAG queries
+        if result['search_rag'] and not result['embedding_source_text'].strip():
             return False
         
         if not isinstance(result['llm_query'], str) or not result['llm_query'].strip():
@@ -130,3 +134,28 @@ class TestQueryRewriterIntegration:
         
         print(f"Connection Test: {connection_success}")
         print("Consistency Test - both results have valid structure and trigger detection")
+    
+    @pytest.mark.integration
+    def test_conversational_context_detection(self):
+        """Test conversational follow-up detection with real LLM."""
+        user_query = "Tell me more about the automation benefits"
+        
+        result = self.query_rewriter.transform_query(user_query)
+        
+        # Validate structure
+        assert self.validate_json_structure(result), f"Invalid JSON structure: {result}"
+        
+        # Should not trigger RAG search
+        assert result['search_rag'] is False, "Conversational follow-up should not trigger RAG"
+        
+        # Should reference previous conversation
+        llm_query = result['llm_query'].lower()
+        conversation_indicators = ['based on context in previous conversation', 'previous conversation', 'conversation history']
+        has_conversation_ref = any(indicator in llm_query for indicator in conversation_indicators)
+        assert has_conversation_ref, f"Conversational query should reference previous conversation. Got: {result['llm_query']}"
+        
+        print("Conversational Context Test:")
+        print(f"  User Query: {user_query}")
+        print(f"  Search RAG: {result['search_rag']}")
+        print(f"  Embedding Text: {result['embedding_source_text']}")
+        print(f"  LLM Query: {result['llm_query']}")

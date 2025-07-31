@@ -27,31 +27,39 @@ class QueryRewriter:
     
     def _build_system_prompt(self) -> str:
         """Build the system prompt for query transformation."""
-        return f"""You are a query transformation assistant. Your job is to analyze user queries and optimize them for both vector search and LLM generation.
+        return f"""You are a query transformation assistant. Your job is to analyze user queries and determine the appropriate context source for responses.
 
 You must respond with a JSON object containing exactly these fields:
 - "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
-- "embedding_source_text": string - Concise keywords optimized for vector similarity search
-- "llm_query": string - Clear instruction for the LLM to generate the final response
+- "embedding_source_text": string - Concise keywords optimized for vector similarity search (only needed if search_rag=true)
+- "llm_query": string - Clear instruction for the LLM with appropriate context reference
 
-Key principles:
-1. search_rag: Simply check if "{self.trigger_phrase}" appears in the user query
-2. embedding_source_text: Extract core concepts and keywords that would match relevant documents. Focus on nouns, topics, and key terms rather than questions.
-3. llm_query: For RAG queries (search_rag=true), always include "based on the provided context" to ensure context-grounded responses. For non-RAG queries, create general instructions.
+Context source logic:
+1. **If "{self.trigger_phrase}" present**: Always search knowledge base
+   - Use "based on the provided context" in llm_query
+   
+2. **If no "{self.trigger_phrase}"**: Analyze if query references previous conversation
+   - **Conversational references** (uses "that", "it", "the X part", "more about", "tell me more", "what you mentioned", etc.):
+     Use "based on context in previous conversation" in llm_query
+   - **General standalone questions**: 
+     No context reference needed in llm_query
 
 Examples:
 
 User: "What is machine learning?"
-Response: {{"search_rag": false, "embedding_source_text": "machine learning definition algorithms", "llm_query": "Explain what machine learning is, including key concepts and applications."}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications."}}
 
 User: "{self.trigger_phrase} How does neural network training work?"
 Response: {{"search_rag": true, "embedding_source_text": "neural network training backpropagation gradient descent", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved."}}
 
-User: "{self.trigger_phrase} according to the docs on vibe coding, what are the benefits?"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding benefits advantages", "llm_query": "List and explain the benefits of vibe coding based on the provided context."}}
+User: "Tell me more about the automation benefits"
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation."}}
 
-User: "{self.trigger_phrase} tell me about Python's memory management"
-Response: {{"search_rag": true, "embedding_source_text": "Python memory management garbage collection", "llm_query": "Describe Python's memory management system based on the provided context, including how it handles memory allocation and garbage collection."}}
+User: "Can you elaborate on that approach?"
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation."}}
+
+User: "What's the weather today?"
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "What's the weather today?"}}
 
 User: "{self.trigger_phrase} what are the differences between REST and GraphQL APIs?"  
 Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL API differences comparison", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases."}}
@@ -164,11 +172,16 @@ Always respond with valid JSON only. Do not include any other text or formatting
             else:
                 result['search_rag'] = bool(result['search_rag'])
         
-        # Validate string fields are not empty
-        for field in ['embedding_source_text', 'llm_query']:
-            if not isinstance(result[field], str) or not result[field].strip():
-                logger.warning(f"Field '{field}' is empty or invalid")
+        # Validate embedding_source_text (only required for RAG queries)
+        if result['search_rag']:
+            if not isinstance(result['embedding_source_text'], str) or not result['embedding_source_text'].strip():
+                logger.warning("embedding_source_text is required for RAG queries")
                 return self._create_fallback_result(original_query)
+        
+        # Validate llm_query is not empty
+        if not isinstance(result['llm_query'], str) or not result['llm_query'].strip():
+            logger.warning("llm_query field is empty or invalid")
+            return self._create_fallback_result(original_query)
         
         # Double-check search_rag logic against actual trigger detection
         actual_has_trigger = self.trigger_phrase.lower() in original_query.lower()

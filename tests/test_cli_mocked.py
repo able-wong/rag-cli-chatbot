@@ -194,3 +194,71 @@ def test_prompt_building():
         no_answer_prompt = cli._build_no_answer_prompt(llm_query)
         assert "couldn't find relevant information" in no_answer_prompt
 
+def test_configurable_system_prompt():
+    """Test that CLI uses configurable system prompt from config."""
+    
+    # Mock all dependencies
+    with patch('cli.ConfigManager') as mock_config, \
+         patch('cli.EmbeddingClient'), \
+         patch('cli.QdrantDB'), \
+         patch('cli.LLMClient'), \
+         patch('cli.QueryRewriter'), \
+         patch('cli.setup_logging'):
+        
+        # Setup config mock with custom system prompt
+        custom_prompt = "You are John's writing assistant. Your job is helping John research and write blog posts. Follow the task instructions carefully and use the specified context source as directed. If you don't know the answer based on the specified context or from conversation history, you can say you don't know."
+        
+        config_instance = mock_config.return_value
+        config_instance.get_rag_config.return_value = {'trigger_phrase': '@knowledgebase', 'top_k': 5, 'min_score': 0.7, 'max_context_length': 8000}
+        config_instance.get_vector_db_config.return_value = {}
+        config_instance.get_embedding_config.return_value = {}
+        config_instance.get_llm_config.return_value = {}
+        config_instance.get_documents_config.return_value = {}
+        config_instance.get_logging_config.return_value = {}
+        config_instance.get.side_effect = lambda key, default=None: {
+            'cli': {'system_prompt': custom_prompt, 'max_history_length': 20},
+            'query_rewriter': {'enabled': True}
+        }.get(key, default)
+        
+        # Initialize CLI
+        cli = RAGCLI()
+        
+        # Check that conversation history uses custom system prompt
+        assert len(cli.conversation_history) == 1
+        assert cli.conversation_history[0]['role'] == 'system'
+        assert cli.conversation_history[0]['content'] == custom_prompt
+        assert "John's writing assistant" in cli.conversation_history[0]['content']
+
+def test_default_system_prompt_fallback():
+    """Test that CLI falls back to default system prompt if not configured."""
+    
+    # Mock all dependencies
+    with patch('cli.ConfigManager') as mock_config, \
+         patch('cli.EmbeddingClient'), \
+         patch('cli.QdrantDB'), \
+         patch('cli.LLMClient'), \
+         patch('cli.QueryRewriter'), \
+         patch('cli.setup_logging'):
+        
+        # Setup config mock without custom system prompt
+        config_instance = mock_config.return_value
+        config_instance.get_rag_config.return_value = {'trigger_phrase': '@knowledgebase', 'top_k': 5, 'min_score': 0.7, 'max_context_length': 8000}
+        config_instance.get_vector_db_config.return_value = {}
+        config_instance.get_embedding_config.return_value = {}
+        config_instance.get_llm_config.return_value = {}
+        config_instance.get_documents_config.return_value = {}
+        config_instance.get_logging_config.return_value = {}
+        config_instance.get.side_effect = lambda key, default=None: {
+            'cli': {'max_history_length': 20},  # No system_prompt key
+            'query_rewriter': {'enabled': True}
+        }.get(key, default)
+        
+        # Initialize CLI
+        cli = RAGCLI()
+        
+        # Check that conversation history uses default system prompt
+        assert len(cli.conversation_history) == 1
+        assert cli.conversation_history[0]['role'] == 'system'
+        default_prompt = "You are a helpful AI assistant. Follow the task instructions carefully and use the specified context source as directed. If you don't know the answer based on the specified context or from conversation history, you can say you don't know."
+        assert cli.conversation_history[0]['content'] == default_prompt
+
