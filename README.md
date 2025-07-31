@@ -17,7 +17,7 @@ A command-line chatbot with Retrieval-Augmented Generation (RAG) capabilities. S
 
 ### Prerequisites
 
-- Python 3.8+
+- Python 3.11+
 - Virtual environment (recommended)
 
 ### Installation
