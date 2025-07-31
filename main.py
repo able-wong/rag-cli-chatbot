@@ -61,13 +61,13 @@ Commands available in chat:
     # Check if config file exists
     if not os.path.exists(args.config):
         console.print(f"❌ [red]Configuration file not found: {args.config}[/red]")
-        console.print(f"💡 [yellow]Please create a config file or check the path[/yellow]")
-        console.print(f"📝 [blue]Example config available at: config/config.yaml[/blue]")
+        console.print("💡 [yellow]Please create a config file or check the path[/yellow]")
+        console.print("📝 [blue]Example config available at: config/config.yaml[/blue]")
         sys.exit(1)
     
     try:
         # Initialize and start the chatbot
-        console.print(f"🚀 [green]Starting RAG CLI Chatbot...[/green]")
+        console.print("🚀 [green]Starting RAG CLI Chatbot...[/green]")
         console.print(f"📋 [dim]Using config: {args.config}[/dim]")
         
         cli = RAGCLI(args.config)
@@ -79,7 +79,7 @@ Commands available in chat:
         
     except Exception as e:
         console.print(f"\n❌ [red]Failed to start RAG CLI Chatbot: {str(e)}[/red]")
-        console.print(f"💡 [yellow]Please check your configuration and dependencies[/yellow]")
+        console.print("💡 [yellow]Please check your configuration and dependencies[/yellow]")
         sys.exit(1)
 
 if __name__ == "__main__":

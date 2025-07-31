@@ -4,8 +4,7 @@ Unit tests for logging configuration functionality.
 Tests the logging_config module with various configurations.
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock, mock_open
+from unittest.mock import Mock, patch
 import logging
 import logging.handlers
 import sys
@@ -202,7 +201,6 @@ class TestLoggingSetup:
         # Add a dummy handler first
         dummy_handler = logging.StreamHandler()
         logging.getLogger().addHandler(dummy_handler)
-        initial_count = len(logging.getLogger().handlers)
         
         setup_logging({'output': 'stderr'})
         

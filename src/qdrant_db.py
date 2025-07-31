@@ -2,7 +2,6 @@ import logging
 from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, ScoredPoint
-from qdrant_client.http.exceptions import UnexpectedResponse
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +38,7 @@ class QdrantDB:
     def test_connection(self) -> bool:
         """Test connection to Qdrant server."""
         try:
-            # Try to get collections to test connection
-            collections = self.client.get_collections()
-            logger.info("Successfully connected to Qdrant")
+            self.client.get_collections()
             return True
         except Exception as e:
             logger.error(f"Failed to connect to Qdrant: {e}")

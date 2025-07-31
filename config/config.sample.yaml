@@ -109,17 +109,6 @@ cli:
   
   # CONVERSATION SETTINGS
   max_history_length: 20               # Maximum conversation turns to keep
-  
-  # WELCOME MESSAGE
-  welcome_message: |
-    🤖 Welcome to RAG CLI Chatbot!
-    
-    Commands:
-    - Type normally for general chat
-    - Use @knowledgebase to search the knowledge base
-    - /clear - Clear conversation history
-    - /bye - Exit the chatbot
-    - /doc <number> - View detailed document content
 
 # ============================================================================
 # LOGGING CONFIGURATION
