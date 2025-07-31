@@ -30,4 +30,4 @@ jobs:
         ./doit.sh lint
     - name: Test with pytest
       run: |
-        pytest
+        ./doit.sh test

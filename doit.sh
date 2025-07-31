@@ -7,7 +7,7 @@
 case "$1" in
     test)
         echo "Running tests..."
-        pytest
+        pytest tests/
         ;;
     integration-test)
         echo "Running integration tests..."
