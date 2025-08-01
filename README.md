@@ -6,6 +6,9 @@ A command-line chatbot with Retrieval-Augmented Generation (RAG) capabilities. S
 
 - **Interactive CLI Interface**: Rich terminal interface with colors and formatting
 - **RAG Capabilities**: Search and retrieve information from knowledge base
+- **Conversational Context Awareness**: Intelligent follow-up handling without re-searching
+- **LLM-Based Query Transformation**: Smart query analysis and routing for better results
+- **Configurable System Prompts**: Customize assistant role and personality
 - **Multiple LLM Providers**: Support for Ollama and Gemini
 - **Multiple Embedding Providers**: Ollama, Gemini, and SentenceTransformers
 - **Vector Database**: Qdrant integration for semantic search
@@ -111,6 +114,21 @@ vector_db:
   api_key: "your-api-key"  # Or set QDRANT_API_KEY env var
 ```
 
+### CLI Settings
+
+**System Prompt Customization**:
+```yaml
+cli:
+  system_prompt: "You are a helpful AI assistant. Follow the task instructions carefully and use the specified context source as directed. If you don't know the answer based on the specified context or from conversation history, you can say you don't know."
+  max_history_length: 20  # Maximum conversation turns to keep
+```
+
+**Custom Role Example**:
+```yaml
+cli:
+  system_prompt: "You are John's writing assistant. Your job is helping John research and write blog posts. Follow the task instructions carefully and use the specified context source as directed. If you don't know the answer based on the specified context or from conversation history, you can say you don't know."
+```
+
 ### Qdrant collection "documents" Schema Keys:
 
 - **chunk_text**: The actual text content of the chunk
@@ -147,7 +165,8 @@ You: Hello, how are you?
 Assistant: Hello! I'm doing well, thank you for asking...
 
 You: @knowledgebase What is Python?
-🔍 Searching knowledge base...
+🔍 Searching knowledge base with 'Python programming language basics'...
+💭 Thinking with LLM prompt 'Explain what Python is based on the provided context, including...'...
 Assistant: Based on the knowledge base, Python is a high-level programming language...
 
 📚 Retrieved from knowledge base:
@@ -158,21 +177,67 @@ Assistant: Based on the knowledge base, Python is a high-level programming langu
 │ 2 │ programming_guide.txt                       │ 0.845  │
 └───┴─────────────────────────────────────────────┴────────┘
 💡 Use /doc <number> to see full content
+
+You: Tell me more about its web frameworks
+💭 Thinking with LLM prompt 'Provide more details about Python web frameworks based on conte...'...
+Assistant: Based on our previous discussion about Python, here are the popular web frameworks...
+
+You: What about Django specifically?
+💭 Thinking with LLM prompt 'Explain Django specifically based on context in previous conver...'...
+Assistant: Django, as mentioned in our conversation, is a high-level Python web framework...
 ```
+
+**Key Features Demonstrated:**
+- **Knowledge Base Search**: `@knowledgebase` triggers RAG search with optimized queries
+- **Conversational Follow-ups**: "Tell me more..." uses conversation history without re-searching
+- **Smart Context Switching**: System intelligently chooses between knowledge base and conversation context
 
 ## 🧪 Testing
 
-To run the full test suite, use `pytest`:
+### Unit Tests
+
+To run unit tests only (mocked dependencies, fast):
 
 ```bash
 # Activate virtual environment
 source venv/bin/activate
 
-# Run all tests
+# Run unit tests only
+./doit.sh test
+# OR directly: pytest tests/
+```
+
+### Integration Tests
+
+To run integration tests with real LLM providers (requires valid config):
+
+```bash
+# Ensure config/config.yaml is properly configured with real API keys
+source venv/bin/activate
+
+# Run integration tests
+./doit.sh integration-test
+# OR directly: pytest integration_tests/ -m integration
+```
+
+**Integration Test Requirements:**
+- Valid `config/config.yaml` with working LLM provider settings
+- Internet connection for cloud LLM providers (Gemini)
+- Proper API keys configured
+
+### Full Test Suite
+
+To run all tests (unit + integration):
+
+```bash
+source venv/bin/activate
 pytest
 ```
 
-This will discover and run all tests in the `tests/` directory. For more detailed output, you can use `pytest -v`.
+**Test Coverage:**
+- **68 unit tests** - Core logic with mocked dependencies  
+- **8 integration tests** - Real LLM provider functionality
+- **Comprehensive coverage** - QueryRewriter, CLI, fallback behavior, edge cases
 
 ## 🛠️ Development Commands
 
@@ -185,6 +250,7 @@ For common development tasks, use the `doit.sh` script:
 Available commands:
 
 - `test`: Runs the `pytest` test suite.
+- `integration-test`: Runs integration tests with real LLM providers (requires valid config.yaml).
 - `lint`: Runs the `ruff` linter without applying fixes.
 - `lint-fix`: Runs the `ruff` linter and attempts to auto-fix issues.
 
@@ -197,17 +263,23 @@ rag-cli-chatbot/
 │   ├── config_manager.py  # Configuration management
 │   ├── embedding_client.py # Embedding generation
 │   ├── llm_client.py      # LLM interaction
+│   ├── query_rewriter.py  # LLM-based query transformation
 │   ├── qdrant_db.py       # Vector database client
 │   └── logging_config.py  # Logging setup
 ├── config/                # Configuration files
 │   ├── config.sample.yaml # Sample configuration template
 │   └── config.yaml        # Main configuration (user-created)
-├── tests/                 # Test files
+├── tests/                 # Unit tests
 │   ├── test_config_manager.py
 │   ├── test_phase1_clients.py
-│   └── test_cli_moked.py
+│   ├── test_query_rewriter.py
+│   └── test_cli_mocked.py
+├── integration_tests/     # Integration tests with real LLM providers
+│   ├── test_query_rewriter_integration.py
+│   └── test_cli_integration.py
 ├── main.py               # Application entry point
 ├── requirements.txt      # Python dependencies
+├── doit.sh              # Development commands
 └── README.md            # This file
 ```
 
@@ -218,6 +290,7 @@ rag-cli-chatbot/
 - ✅ **Phase 0**: Project setup, configuration, logging
 - ✅ **Phase 1**: Core service integration (LLM, Embeddings, Qdrant)
 - ✅ **Phase 2**: MVP CLI with RAG and fallback logic
+- ✅ **Phase 3**: LLM-based query transformation and routing
 
 ### Key Features Implemented
 
@@ -226,19 +299,23 @@ rag-cli-chatbot/
 - [x] Multiple embedding providers (SentenceTransformers, Ollama, Gemini) 
 - [x] Qdrant vector database integration
 - [x] RAG trigger detection (@knowledgebase)
-- [x] Confidence-based fallback system
-- [x] Rich CLI interface with formatted output
+- [x] **LLM-based query transformation** for improved search accuracy
+- [x] **Conversational context awareness** - intelligent follow-up handling
+- [x] **Configurable system prompts** - customize assistant role and personality
+- [x] Structured prompt generation with context instructions
+- [x] Smart fallback system with edge case handling
+- [x] Rich CLI interface with formatted output and progress indicators
 - [x] Conversation history management
 - [x] Document detail viewing
-- [x] Comprehensive test suite
+- [x] Comprehensive test suite with integration tests (76 total tests)
 
 ## 🔮 Future Enhancements
 
 - **Document Ingestion Pipeline**: Automated document processing and chunking
-- **Query Rewriting**: LLM-based query enhancement
+- **Hypothetical Document Embeddings (HyDE)**: Generate hypothetical answers for improved retrieval
 - **Hybrid Search**: Combine vector and keyword search
 - **Re-ranking**: Advanced result scoring and ordering
-- **Implicit RAG**: Automatic knowledge base routing
+- **Implicit RAG**: Automatic knowledge base routing without trigger phrases
 - **Web Interface**: Browser-based chat interface
 
 ## 🐛 Troubleshooting

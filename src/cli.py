@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import List, Any
+from typing import List, Any, Dict
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -10,6 +10,7 @@ from config_manager import ConfigManager
 from embedding_client import EmbeddingClient
 from qdrant_db import QdrantDB
 from llm_client import LLMClient
+from query_rewriter import QueryRewriter
 from logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class RAGCLI:
         self.embedding_client = None
         self.qdrant_db = None
         self.llm_client = None
+        self.query_rewriter = None
         self.conversation_history = []
         self.last_rag_results = []
         
@@ -61,19 +63,27 @@ class RAGCLI:
             self.llm_client = LLMClient(llm_config)
             logger.info("LLM client initialized")
             
+            # Initialize QueryRewriter
+            query_rewriter_config = self.config_manager.get('query_rewriter', {})
+            query_rewriter_config['trigger_phrase'] = self.trigger_phrase
+            self.query_rewriter = QueryRewriter(self.llm_client, query_rewriter_config)
+            logger.info("QueryRewriter initialized")
+            
         except Exception as e:
             logger.error(f"Failed to initialize clients: {e}")
             raise
     
     def _initialize_conversation(self):
         """Initialize conversation with system prompt."""
-        system_prompt = self.rag_config.get('system_prompt', 
-            "You are a helpful AI assistant with access to a knowledge base.")
+        # Use configurable system prompt from config
+        system_prompt = self.cli_config.get('system_prompt', 
+            "You are a helpful AI assistant. Follow the task instructions carefully and use the specified context source as directed. "
+            "If you don't know the answer based on the specified context or from conversation history, you can say you don't know.")
         
         self.conversation_history = [
             {"role": "system", "content": system_prompt}
         ]
-        logger.info("Conversation initialized with system prompt")
+        logger.info("Conversation initialized with configurable system prompt")
     
     def _get_help_text(self) -> str:
         """Return the help text string."""
@@ -165,18 +175,52 @@ class RAGCLI:
         )
         self.console.print(panel)
     
-    def _detect_rag_trigger(self, user_input: str) -> bool:
-        """Check if user input contains RAG trigger phrase."""
-        return self.trigger_phrase.lower() in user_input.lower()
-    
-    def _perform_rag_search(self, query: str) -> List[Any]:
-        """Perform RAG search and return results."""
+    def _analyze_and_transform_query(self, user_input: str) -> Dict[str, Any]:
+        """
+        Analyze and transform user query using QueryRewriter.
+        
+        Returns:
+            Dict containing:
+            - search_rag: boolean indicating if RAG search should be performed
+            - embedding_source_text: optimized text for vector search
+            - llm_query: refined prompt for LLM generation
+        """
         try:
-            # Remove trigger phrase from query for embedding
-            clean_query = query.replace(self.trigger_phrase, '').strip()
+            # Check if query rewriter is enabled
+            query_rewriter_config = self.config_manager.get('query_rewriter', {})
+            if not query_rewriter_config.get('enabled', True):
+                # Fallback to simple trigger detection if disabled
+                return self._create_simple_query_analysis(user_input)
             
-            # Generate embedding for the query
-            query_embedding = self.embedding_client.get_embedding(clean_query)
+            # Use QueryRewriter for analysis
+            result = self.query_rewriter.transform_query(user_input)
+            logger.info(f"Query transformed. RAG: {result['search_rag']}, Embedding: '{result['embedding_source_text'][:50]}...'")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Query analysis failed: {e}")
+            # Fallback to simple analysis
+            return self._create_simple_query_analysis(user_input)
+    
+    def _create_simple_query_analysis(self, user_input: str) -> Dict[str, Any]:
+        """Create simple query analysis as fallback when QueryRewriter fails."""
+        has_trigger = self.trigger_phrase.lower() in user_input.lower()
+        clean_query = user_input.replace(self.trigger_phrase, '').strip() if has_trigger else user_input
+        
+        # Only trigger RAG if there's content after the trigger phrase.
+        search_rag = has_trigger and bool(clean_query)
+        
+        return {
+            'search_rag': search_rag,
+            'embedding_source_text': clean_query,
+            'llm_query': user_input
+        }
+    
+    def _perform_rag_search(self, embedding_text: str) -> List[Any]:
+        """Perform RAG search using optimized embedding text and return results."""
+        try:
+            # Generate embedding for the optimized text
+            query_embedding = self.embedding_client.get_embedding(embedding_text)
             
             # Search in Qdrant
             results = self.qdrant_db.search(
@@ -240,23 +284,25 @@ class RAGCLI:
         
         return "\n".join(context_parts)
     
-    def _build_prompt_with_rag(self, query: str, context: str) -> str:
-        """Build user prompt with RAG context."""
-        return f"""Based on the following context from the knowledge base, please answer the question:
-
-Context:
+    def _build_prompt_with_context(self, llm_query: str, context: str) -> str:
+        """Build user prompt with RAG context using structured LLM query."""
+        return f"""Context from knowledge base:
 {context}
 
-Question: {query.replace(self.trigger_phrase, '').strip()}
+Task: {llm_query}
 
-Please provide a helpful answer based on the context above. If the context doesn't contain enough information to answer the question, please state that clearly."""
+If the context doesn't contain enough information to complete the task, please state that clearly."""
     
-    def _build_no_answer_prompt(self, query: str) -> str:
+    def _build_no_answer_prompt(self, llm_query: str) -> str:
         """Build prompt for when no relevant context is found."""
-        return f"""I searched the knowledge base for information related to: "{query.replace(self.trigger_phrase, '').strip()}"
-
-However, I couldn't find relevant information in the knowledge base to answer your question. The available documents don't seem to contain information that matches your query with sufficient confidence.
-
+        # Extract the core question from the LLM query for user feedback
+        # Remove common instruction words to get the essence of what they asked
+        clean_query = llm_query.lower()
+        for phrase in ['based on the provided context', 'explain', 'describe', 'list', 'compare']:
+            clean_query = clean_query.replace(phrase, '').strip()
+        clean_query = clean_query.strip('.,!?').strip()
+        
+        return f"""I searched the knowledge base for information related to your query about \"{clean_query}\", but I couldn't find relevant information to answer your question. The available documents don't seem to contain information that matches your query with sufficient confidence.
 Is there anything else I can help you with, or would you like to rephrase your question?"""
     
     def _manage_conversation_history(self):
@@ -492,33 +538,37 @@ Is there anything else I can help you with, or would you like to rephrase your q
                         break  # Exit if /bye command
                     continue
                 
-                # Check for RAG trigger
-                use_rag = self._detect_rag_trigger(user_input)
+                # Analyze and transform query
+                query_analysis = self._analyze_and_transform_query(user_input)
+                use_rag = query_analysis['search_rag']
                 
                 if use_rag:
-                    # Perform RAG search
-                    self.console.print("🔍 [dim]Searching knowledge base...[/dim]")
-                    rag_results = self._perform_rag_search(user_input)
+                    # Perform RAG search with optimized embedding text
+                    embedding_text = query_analysis['embedding_source_text']
+                    search_display = embedding_text[:80] + "..." if len(embedding_text) > 80 else embedding_text
+                    self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}'...[/dim]")
+                    rag_results = self._perform_rag_search(embedding_text)
                     self.last_rag_results = rag_results
                     
                     if self._should_use_rag_context(rag_results):
-                        # Use RAG context
+                        # Use RAG context with structured LLM query
                         context = self._build_rag_context(rag_results)
-                        prompt = self._build_prompt_with_rag(user_input, context)
+                        prompt = self._build_prompt_with_context(query_analysis['llm_query'], context)
                     else:
                         # No relevant context found
-                        prompt = self._build_no_answer_prompt(user_input)
+                        prompt = self._build_no_answer_prompt(query_analysis['llm_query'])
                         rag_results = []  # Clear results since they're not relevant
                 else:
-                    # Regular chat without RAG
-                    prompt = user_input
+                    # Regular chat without RAG using structured LLM query
+                    prompt = query_analysis['llm_query']
                     rag_results = []
                 
                 # Add user message to history
                 self.conversation_history.append({"role": "user", "content": prompt})
                 
                 # Get LLM response
-                self.console.print("🤖 [dim]Thinking...[/dim]")
+                llm_prompt_display = query_analysis['llm_query'][:80] + "..." if len(query_analysis['llm_query']) > 80 else query_analysis['llm_query']
+                self.console.print(f"🤖 [dim]Thinking with LLM prompt '{llm_prompt_display}'...[/dim]")
                 try:
                     response = self.llm_client.get_llm_response(self.conversation_history)
                     

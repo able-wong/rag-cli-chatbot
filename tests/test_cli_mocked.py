@@ -16,27 +16,67 @@ class MockScoredPoint:
         self.score = score
         self.payload = payload
 
-def test_rag_trigger_detection():
-    """Test RAG trigger phrase detection."""
+def test_query_analysis_with_trigger():
+    """Test query analysis with RAG trigger phrase."""
     
     # Mock all dependencies
-    with patch('cli.ConfigManager'), \
+    with patch('cli.ConfigManager') as mock_config, \
          patch('cli.EmbeddingClient'), \
          patch('cli.QdrantDB'), \
          patch('cli.LLMClient'), \
+         patch('cli.QueryRewriter') as mock_query_rewriter, \
          patch('cli.setup_logging'):
         
+        # Setup config mock
+        mock_config.return_value.get.return_value = {'enabled': True}
+        
         cli = RAGCLI.__new__(RAGCLI)  # Create without calling __init__
-        cli.trigger_phrase = "@knowledgebase"
+        cli.config_manager = mock_config.return_value
+        cli.query_rewriter = mock_query_rewriter.return_value
         
-        # Test positive cases
-        assert cli._detect_rag_trigger("@knowledgebase what is Python?")
-        assert cli._detect_rag_trigger("Can you @knowledgebase tell me about AI?")
-        assert cli._detect_rag_trigger("@KNOWLEDGEBASE search")  # Case insensitive
+        # Mock QueryRewriter response for RAG query
+        mock_query_rewriter.return_value.transform_query.return_value = {
+            'search_rag': True,
+            'embedding_source_text': 'Python programming language',
+            'llm_query': 'Explain Python programming based on the provided context.'
+        }
         
-        # Test negative cases
-        assert not cli._detect_rag_trigger("What is Python?")
-        assert not cli._detect_rag_trigger("Tell me about AI")
+        result = cli._analyze_and_transform_query("@knowledgebase what is Python?")
+        
+        assert result['search_rag'] is True
+        assert 'Python' in result['embedding_source_text']
+        assert 'context' in result['llm_query']
+
+def test_query_analysis_without_trigger():
+    """Test query analysis without RAG trigger phrase."""
+    
+    # Mock all dependencies
+    with patch('cli.ConfigManager') as mock_config, \
+         patch('cli.EmbeddingClient'), \
+         patch('cli.QdrantDB'), \
+         patch('cli.LLMClient'), \
+         patch('cli.QueryRewriter') as mock_query_rewriter, \
+         patch('cli.setup_logging'):
+        
+        # Setup config mock
+        mock_config.return_value.get.return_value = {'enabled': True}
+        
+        cli = RAGCLI.__new__(RAGCLI)  # Create without calling __init__
+        cli.config_manager = mock_config.return_value
+        cli.query_rewriter = mock_query_rewriter.return_value
+        
+        # Mock QueryRewriter response for non-RAG query
+        mock_query_rewriter.return_value.transform_query.return_value = {
+            'search_rag': False,
+            'embedding_source_text': 'weather today',
+            'llm_query': 'What is the weather today?'
+        }
+        
+        result = cli._analyze_and_transform_query("What is the weather today?")
+        
+        assert result['search_rag'] is False
+        assert result['embedding_source_text'] == 'weather today'
+        assert 'context' not in result['llm_query']
 
 def test_rag_context_decision():
     """Test decision logic for using RAG context."""
@@ -130,28 +170,95 @@ def test_rag_context_building():
         assert len(context) <= cli.max_context_length + 100  # Some tolerance
 
 def test_prompt_building():
-    """Test prompt building with and without RAG."""
+    """Test prompt building with new structured approach."""
     
     with patch('cli.ConfigManager'), \
          patch('cli.EmbeddingClient'), \
          patch('cli.QdrantDB'), \
          patch('cli.LLMClient'), \
+         patch('cli.QueryRewriter'), \
          patch('cli.setup_logging'):
         
         cli = RAGCLI.__new__(RAGCLI)
-        cli.trigger_phrase = "@knowledgebase"
         
-        # Test RAG prompt building
-        query = "@knowledgebase What is Python?"
+        # Test RAG prompt building with structured LLM query
+        llm_query = "Explain Python programming based on the provided context."
         context = "Python is a programming language."
         
-        rag_prompt = cli._build_prompt_with_rag(query, context)
-        assert "Context:" in rag_prompt
+        rag_prompt = cli._build_prompt_with_context(llm_query, context)
+        assert "Context from knowledge base:" in rag_prompt
         assert "Python is a programming language" in rag_prompt
-        assert "What is Python?" in rag_prompt
+        assert "Task: Explain Python programming based on the provided context." in rag_prompt
         
         # Test no-answer prompt building
-        no_answer_prompt = cli._build_no_answer_prompt(query)
+        no_answer_prompt = cli._build_no_answer_prompt(llm_query)
         assert "couldn't find relevant information" in no_answer_prompt
-        assert "What is Python?" in no_answer_prompt
+
+def test_configurable_system_prompt():
+    """Test that CLI uses configurable system prompt from config."""
+    
+    # Mock all dependencies
+    with patch('cli.ConfigManager') as mock_config, \
+         patch('cli.EmbeddingClient'), \
+         patch('cli.QdrantDB'), \
+         patch('cli.LLMClient'), \
+         patch('cli.QueryRewriter'), \
+         patch('cli.setup_logging'):
+        
+        # Setup config mock with custom system prompt
+        custom_prompt = "You are John's writing assistant. Your job is helping John research and write blog posts. Follow the task instructions carefully and use the specified context source as directed. If you don't know the answer based on the specified context or from conversation history, you can say you don't know."
+        
+        config_instance = mock_config.return_value
+        config_instance.get_rag_config.return_value = {'trigger_phrase': '@knowledgebase', 'top_k': 5, 'min_score': 0.7, 'max_context_length': 8000}
+        config_instance.get_vector_db_config.return_value = {}
+        config_instance.get_embedding_config.return_value = {}
+        config_instance.get_llm_config.return_value = {}
+        config_instance.get_documents_config.return_value = {}
+        config_instance.get_logging_config.return_value = {}
+        config_instance.get.side_effect = lambda key, default=None: {
+            'cli': {'system_prompt': custom_prompt, 'max_history_length': 20},
+            'query_rewriter': {'enabled': True}
+        }.get(key, default)
+        
+        # Initialize CLI
+        cli = RAGCLI()
+        
+        # Check that conversation history uses custom system prompt
+        assert len(cli.conversation_history) == 1
+        assert cli.conversation_history[0]['role'] == 'system'
+        assert cli.conversation_history[0]['content'] == custom_prompt
+        assert "John's writing assistant" in cli.conversation_history[0]['content']
+
+def test_default_system_prompt_fallback():
+    """Test that CLI falls back to default system prompt if not configured."""
+    
+    # Mock all dependencies
+    with patch('cli.ConfigManager') as mock_config, \
+         patch('cli.EmbeddingClient'), \
+         patch('cli.QdrantDB'), \
+         patch('cli.LLMClient'), \
+         patch('cli.QueryRewriter'), \
+         patch('cli.setup_logging'):
+        
+        # Setup config mock without custom system prompt
+        config_instance = mock_config.return_value
+        config_instance.get_rag_config.return_value = {'trigger_phrase': '@knowledgebase', 'top_k': 5, 'min_score': 0.7, 'max_context_length': 8000}
+        config_instance.get_vector_db_config.return_value = {}
+        config_instance.get_embedding_config.return_value = {}
+        config_instance.get_llm_config.return_value = {}
+        config_instance.get_documents_config.return_value = {}
+        config_instance.get_logging_config.return_value = {}
+        config_instance.get.side_effect = lambda key, default=None: {
+            'cli': {'max_history_length': 20},  # No system_prompt key
+            'query_rewriter': {'enabled': True}
+        }.get(key, default)
+        
+        # Initialize CLI
+        cli = RAGCLI()
+        
+        # Check that conversation history uses default system prompt
+        assert len(cli.conversation_history) == 1
+        assert cli.conversation_history[0]['role'] == 'system'
+        default_prompt = "You are a helpful AI assistant. Follow the task instructions carefully and use the specified context source as directed. If you don't know the answer based on the specified context or from conversation history, you can say you don't know."
+        assert cli.conversation_history[0]['content'] == default_prompt
 
