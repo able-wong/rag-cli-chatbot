@@ -6,6 +6,7 @@ A command-line chatbot with Retrieval-Augmented Generation (RAG) capabilities. S
 
 - **Interactive CLI Interface**: Rich terminal interface with colors and formatting
 - **RAG Capabilities**: Search and retrieve information from knowledge base
+- **Dual Retrieval Strategies**: Choose between keyword-based "rewrite" or semantic "HyDE" search
 - **Conversational Context Awareness**: Intelligent follow-up handling without re-searching
 - **LLM-Based Query Transformation**: Smart query analysis and routing for better results
 - **Configurable System Prompts**: Customize assistant role and personality
@@ -114,6 +115,39 @@ vector_db:
   api_key: "your-api-key"  # Or set QDRANT_API_KEY env var
 ```
 
+### RAG Retrieval Strategy
+
+The application supports two retrieval strategies for knowledge base search:
+
+**Rewrite Strategy (Default - Fast)**:
+```yaml
+rag:
+  retrieval_strategy: "rewrite"  # Extract focused keywords from user queries
+  trigger_phrase: "@knowledgebase"
+  top_k: 10
+  min_score: 0.3
+```
+
+**HyDE Strategy (Semantic - Better Understanding)**:
+```yaml
+rag:
+  retrieval_strategy: "hyde"  # Generate hypothetical documents for semantic search
+  trigger_phrase: "@knowledgebase"
+  top_k: 10
+  min_score: 0.3
+```
+
+**Strategy Comparison:**
+
+| Strategy | Speed | Best For | Search Method |
+|----------|-------|----------|---------------|
+| **Rewrite** | Fast | Factual queries, keyword matching | `"neural networks training"` |
+| **HyDE** | Slower | Conceptual questions, semantic understanding | `"Neural networks learn through backpropagation..."` |
+
+**When to Use:**
+- **Rewrite**: Start here for general use, good performance
+- **HyDE**: Switch if you need better retrieval of conceptually related content
+
 ### CLI Settings
 
 **System Prompt Customization**:
@@ -150,6 +184,7 @@ cli:
 
 - **General Chat**: Type normally to chat without knowledge base
 - **Knowledge Base Search**: Use `@knowledgebase` to trigger RAG search
+- **System Info**: `/info` - Display current configuration including retrieval strategy
 - **Clear History**: `/clear` - Reset conversation
 - **Exit**: `/bye` - Exit the application
 - **View Documents**: `/doc <number>` - See full document content
@@ -165,7 +200,7 @@ You: Hello, how are you?
 Assistant: Hello! I'm doing well, thank you for asking...
 
 You: @knowledgebase What is Python?
-🔍 Searching knowledge base with 'Python programming language basics'...
+🔍 Searching knowledge base with 'Python is a high-level programming language known for its simplicity and readability. It supports multiple programming paradigms and has extensive libraries...'...
 💭 Thinking with LLM prompt 'Explain what Python is based on the provided context, including...'...
 Assistant: Based on the knowledge base, Python is a high-level programming language...
 
@@ -189,6 +224,7 @@ Assistant: Django, as mentioned in our conversation, is a high-level Python web 
 
 **Key Features Demonstrated:**
 - **Knowledge Base Search**: `@knowledgebase` triggers RAG search with optimized queries
+- **HyDE Retrieval**: Shows hypothetical document generation for semantic search (example uses HyDE strategy)
 - **Conversational Follow-ups**: "Tell me more..." uses conversation history without re-searching
 - **Smart Context Switching**: System intelligently chooses between knowledge base and conversation context
 
@@ -291,6 +327,7 @@ rag-cli-chatbot/
 - ✅ **Phase 1**: Core service integration (LLM, Embeddings, Qdrant)
 - ✅ **Phase 2**: MVP CLI with RAG and fallback logic
 - ✅ **Phase 3**: LLM-based query transformation and routing
+- ✅ **Phase 4**: HyDE (Hypothetical Document Embeddings) dual retrieval strategies
 
 ### Key Features Implemented
 
@@ -299,6 +336,7 @@ rag-cli-chatbot/
 - [x] Multiple embedding providers (SentenceTransformers, Ollama, Gemini) 
 - [x] Qdrant vector database integration
 - [x] RAG trigger detection (@knowledgebase)
+- [x] **Dual retrieval strategies** - Rewrite (keyword-based) and HyDE (semantic)
 - [x] **LLM-based query transformation** for improved search accuracy
 - [x] **Conversational context awareness** - intelligent follow-up handling
 - [x] **Configurable system prompts** - customize assistant role and personality
@@ -312,10 +350,10 @@ rag-cli-chatbot/
 ## 🔮 Future Enhancements
 
 - **Document Ingestion Pipeline**: Automated document processing and chunking
-- **Hypothetical Document Embeddings (HyDE)**: Generate hypothetical answers for improved retrieval
-- **Hybrid Search**: Combine vector and keyword search
-- **Re-ranking**: Advanced result scoring and ordering
+- **Hybrid Search**: Combine vector and keyword search with reciprocal rank fusion
+- **Re-ranking**: Advanced result scoring and ordering with cross-encoder models
 - **Implicit RAG**: Automatic knowledge base routing without trigger phrases
+- **Query Expansion**: Multi-query generation for comprehensive retrieval
 - **Web Interface**: Browser-based chat interface
 
 ## 🐛 Troubleshooting
