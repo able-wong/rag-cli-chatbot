@@ -207,9 +207,12 @@ class RAGCLI:
         has_trigger = self.trigger_phrase.lower() in user_input.lower()
         clean_query = user_input.replace(self.trigger_phrase, '').strip() if has_trigger else user_input
         
+        # Only trigger RAG if there's content after the trigger phrase.
+        search_rag = has_trigger and bool(clean_query)
+        
         return {
-            'search_rag': has_trigger,
-            'embedding_source_text': clean_query if clean_query else user_input,
+            'search_rag': search_rag,
+            'embedding_source_text': clean_query,
             'llm_query': user_input
         }
     
@@ -299,8 +302,7 @@ If the context doesn't contain enough information to complete the task, please s
             clean_query = clean_query.replace(phrase, '').strip()
         clean_query = clean_query.strip('.,!?').strip()
         
-        return """I searched the knowledge base for information related to your query, but I couldn't find relevant information to answer your question. The available documents don't seem to contain information that matches your query with sufficient confidence.
-
+        return f"""I searched the knowledge base for information related to your query about \"{clean_query}\", but I couldn't find relevant information to answer your question. The available documents don't seem to contain information that matches your query with sufficient confidence.
 Is there anything else I can help you with, or would you like to rephrase your question?"""
     
     def _manage_conversation_history(self):

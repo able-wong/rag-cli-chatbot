@@ -206,11 +206,13 @@ Always respond with valid JSON only. Do not include any other text or formatting
         
         # Clean query for embedding (remove trigger phrase)
         clean_query = user_query.replace(self.trigger_phrase, '').strip()
-        embedding_text = clean_query if clean_query else user_query
+        
+        # Only trigger RAG if there's content after the trigger phrase
+        search_rag = has_trigger and bool(clean_query)
         
         fallback_result = {
-            'search_rag': has_trigger,
-            'embedding_source_text': embedding_text,
+            'search_rag': search_rag,
+            'embedding_source_text': clean_query,
             'llm_query': user_query
         }
         

@@ -336,6 +336,30 @@ def test_query_cleaning_in_fallback():
     assert result['embedding_source_text'] == "What is machine learning?"
     assert result['llm_query'] == "@knowledgebase    What is machine learning?   "
 
+def test_empty_query_after_trigger_fallback():
+    """Test fallback behavior when query contains only trigger phrase."""
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Force fallback with exception
+    mock_llm.get_llm_response.side_effect = Exception("Test exception")
+    
+    # Test with just trigger phrase
+    result = rewriter.transform_query("@knowledgebase")
+    
+    # Should detect trigger but not trigger RAG search due to empty content
+    assert result['search_rag'] is False  # Should not trigger RAG with empty content
+    assert result['embedding_source_text'] == ""  # Empty after cleaning
+    assert result['llm_query'] == "@knowledgebase"  # Original query preserved
+    
+    # Test with trigger phrase and whitespace only
+    result = rewriter.transform_query("@knowledgebase   ")
+    
+    assert result['search_rag'] is False  # Should not trigger RAG with empty content
+    assert result['embedding_source_text'] == ""  # Empty after cleaning and stripping
+    assert result['llm_query'] == "@knowledgebase   "  # Original query preserved
+
 def test_conversational_follow_up_detection():
     """Test detection of conversational follow-up queries."""
     mock_llm = create_mock_llm_client()
