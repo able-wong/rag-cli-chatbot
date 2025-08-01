@@ -15,6 +15,9 @@ from logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
 
+# Display constants
+DISPLAY_TEXT_TRUNCATE_LENGTH = 160  # Characters to show before truncating with "..."
+
 class RAGCLI:
     def __init__(self, config_path: str = "config/config.yaml"):
         self.console = Console()
@@ -63,10 +66,16 @@ class RAGCLI:
             self.llm_client = LLMClient(llm_config)
             logger.info("LLM client initialized")
             
-            # Initialize QueryRewriter
+            # Initialize QueryRewriter with merged configs
             query_rewriter_config = self.config_manager.get('query_rewriter', {})
-            query_rewriter_config['trigger_phrase'] = self.trigger_phrase
-            self.query_rewriter = QueryRewriter(self.llm_client, query_rewriter_config)
+            rag_config = self.config_manager.get('rag', {})
+            
+            # Merge configs: query_rewriter settings + rag settings for QueryRewriter
+            merged_config = query_rewriter_config.copy()
+            merged_config['trigger_phrase'] = self.trigger_phrase
+            merged_config['retrieval_strategy'] = rag_config.get('retrieval_strategy', 'rewrite')
+            
+            self.query_rewriter = QueryRewriter(self.llm_client, merged_config)
             logger.info("QueryRewriter initialized")
             
         except Exception as e:
@@ -151,10 +160,19 @@ class RAGCLI:
         collection_name = self.config_manager.get('vector_db.collection_name', 'N/A')
         table.add_row("", "Collection", collection_name)
 
-        # rag settings
-        table.add_row("RAG", "top_k", str(self.config_manager.get('rag.top_k', 'N/A')))
+        # RAG settings
+        retrieval_strategy = self.config_manager.get('rag.retrieval_strategy', 'rewrite')
+        table.add_row("RAG", "retrieval_strategy", retrieval_strategy)
+        table.add_row("", "top_k", str(self.config_manager.get('rag.top_k', 'N/A')))
         table.add_row("", "min_score", str(self.config_manager.get('rag.min_score', 'N/A')))
-        table.add_row("", "system_prompt", str(self.config_manager.get('rag.system_prompt', 'N/A')))
+        
+        # Show system prompt status
+        system_prompt = self.config_manager.get('rag.system_prompt', '')
+        if system_prompt and system_prompt.strip():
+            prompt_preview = system_prompt.strip()[:50] + "..." if len(system_prompt.strip()) > 50 else system_prompt.strip()
+            table.add_row("", "system_prompt", prompt_preview)
+        else:
+            table.add_row("", "system_prompt", "configured")
 
         # Logging Info
         logging_output = self.config_manager.get('logging.output', 'N/A')
@@ -545,7 +563,7 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 if use_rag:
                     # Perform RAG search with optimized embedding text
                     embedding_text = query_analysis['embedding_source_text']
-                    search_display = embedding_text[:80] + "..." if len(embedding_text) > 80 else embedding_text
+                    search_display = embedding_text[:DISPLAY_TEXT_TRUNCATE_LENGTH] + "..." if len(embedding_text) > DISPLAY_TEXT_TRUNCATE_LENGTH else embedding_text
                     self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}'...[/dim]")
                     rag_results = self._perform_rag_search(embedding_text)
                     self.last_rag_results = rag_results
@@ -567,7 +585,7 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 self.conversation_history.append({"role": "user", "content": prompt})
                 
                 # Get LLM response
-                llm_prompt_display = query_analysis['llm_query'][:80] + "..." if len(query_analysis['llm_query']) > 80 else query_analysis['llm_query']
+                llm_prompt_display = query_analysis['llm_query'][:DISPLAY_TEXT_TRUNCATE_LENGTH] + "..." if len(query_analysis['llm_query']) > DISPLAY_TEXT_TRUNCATE_LENGTH else query_analysis['llm_query']
                 self.console.print(f"🤖 [dim]Thinking with LLM prompt '{llm_prompt_display}'...[/dim]")
                 try:
                     response = self.llm_client.get_llm_response(self.conversation_history)
