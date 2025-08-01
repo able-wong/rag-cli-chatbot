@@ -75,6 +75,36 @@ rag:
   # TRIGGER SETTINGS
   trigger_phrase: "@knowledgebase"      # Phrase to trigger RAG search
   
+  # RETRIEVAL STRATEGY SELECTION
+  retrieval_strategy: "rewrite"         # Options: "rewrite", "hyde"
+  
+  # STRATEGY EXPLANATIONS:
+  # 
+  # "rewrite" (Default Strategy):
+  #   - Transforms user queries into optimized search keywords
+  #   - Fast and efficient for keyword-based matching
+  #   - Works well for factual, direct questions
+  #   - Lower computational cost
+  #   - Example: "@knowledgebase How do neural networks work?" 
+  #     → embedding_source_text: "neural networks training backpropagation"
+  #
+  # "hyde" (Hypothetical Document Embeddings):
+  #   - Generates hypothetical documents that would answer the user's question
+  #   - Better semantic matching through document-level understanding
+  #   - Ideal for complex, conceptual questions requiring detailed explanations
+  #   - Higher computational cost due to longer text generation
+  #   - Example: "@knowledgebase How do neural networks work?"
+  #     → embedding_source_text: "Neural networks learn through backpropagation..."
+  #
+  # PERFORMANCE TRADE-OFFS:
+  # - "rewrite": Faster queries, good for keyword matching, may miss nuanced content
+  # - "hyde": Slower queries, better semantic understanding, finds conceptually related content
+  #
+  # RECOMMENDATION:
+  # - Start with "rewrite" for general use
+  # - Switch to "hyde" if you need better retrieval of conceptually related documents
+  # - Test both strategies with your specific knowledge base to determine optimal choice
+  
   # SEARCH SETTINGS
   top_k: 10                             # Number of documents to retrieve
   min_score: 0.3                       # Minimum similarity score threshold

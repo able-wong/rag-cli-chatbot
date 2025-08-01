@@ -31,6 +31,25 @@ def test_query_rewriter_initialization():
     
     assert rewriter.llm_client == mock_llm
     assert rewriter.trigger_phrase == '@knowledgebase'
+    assert rewriter.retrieval_strategy == 'rewrite'  # Default strategy
+    assert rewriter.temperature == 0.1
+    assert rewriter.max_tokens == 512
+
+def test_query_rewriter_hyde_initialization():
+    """Test QueryRewriter initialization with HyDE strategy."""
+    mock_llm = create_mock_llm_client()
+    config = {
+        'trigger_phrase': '@knowledgebase',
+        'retrieval_strategy': 'hyde',
+        'temperature': 0.1,
+        'max_tokens': 512
+    }
+    
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    assert rewriter.llm_client == mock_llm
+    assert rewriter.trigger_phrase == '@knowledgebase'
+    assert rewriter.retrieval_strategy == 'hyde'
     assert rewriter.temperature == 0.1
     assert rewriter.max_tokens == 512
 
@@ -445,3 +464,191 @@ def test_rag_query_still_uses_provided_context():
     assert result['search_rag'] is True
     assert len(result['embedding_source_text']) > 0
     assert "based on the provided context" in result['llm_query']
+
+# ============================================================================
+# HyDE Strategy Tests
+# ============================================================================
+
+def test_hyde_strategy_system_prompt_selection():
+    """Test that HyDE strategy uses the correct system prompt."""
+    mock_llm = create_mock_llm_client()
+    config = {
+        'trigger_phrase': '@knowledgebase',
+        'retrieval_strategy': 'hyde'
+    }
+    
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Check that the system prompt contains HyDE-specific instructions
+    assert "HyDE (Hypothetical Document Embeddings)" in rewriter.system_prompt
+    assert "hypothetical document" in rewriter.system_prompt
+
+def test_rewrite_strategy_system_prompt_selection():
+    """Test that rewrite strategy uses the correct system prompt."""
+    mock_llm = create_mock_llm_client()
+    config = {
+        'trigger_phrase': '@knowledgebase',
+        'retrieval_strategy': 'rewrite'
+    }
+    
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Check that the system prompt contains rewrite-specific instructions
+    assert "Core topic keywords optimized for vector similarity search" in rewriter.system_prompt
+    assert "HyDE" not in rewriter.system_prompt
+
+def test_hyde_strategy_hypothetical_document_generation():
+    """Test HyDE strategy generates hypothetical documents."""
+    mock_llm = create_mock_llm_client()
+    config = {
+        'trigger_phrase': '@knowledgebase',
+        'retrieval_strategy': 'hyde'
+    }
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock HyDE response with hypothetical document
+    mock_response = {
+        "search_rag": True,
+        "embedding_source_text": "Neural networks are computational models inspired by biological neural networks. They consist of interconnected nodes called neurons that process information through weighted connections. During training, networks learn by adjusting these weights through backpropagation, a process that calculates errors and propagates them backward through the network to optimize performance.",
+        "llm_query": "Explain how neural networks work based on the provided context."
+    }
+    mock_llm.get_llm_response.return_value = json.dumps(mock_response)
+    
+    result = rewriter.transform_query("@knowledgebase How do neural networks work?")
+    
+    assert result['search_rag'] is True
+    # HyDE should generate a comprehensive hypothetical document
+    assert len(result['embedding_source_text']) > 50  # Much longer than keywords
+    assert "neural networks" in result['embedding_source_text'].lower()
+    assert "training" in result['embedding_source_text'].lower()
+    assert "based on the provided context" in result['llm_query']
+
+def test_hyde_vs_rewrite_embedding_text_difference():
+    """Test that HyDE and rewrite strategies produce different embedding text."""
+    mock_llm = create_mock_llm_client()
+    
+    # Test rewrite strategy
+    rewrite_config = {
+        'trigger_phrase': '@knowledgebase',
+        'retrieval_strategy': 'rewrite'
+    }
+    rewrite_rewriter = QueryRewriter(mock_llm, rewrite_config)
+    
+    rewrite_response = {
+        "search_rag": True,
+        "embedding_source_text": "machine learning algorithms applications",  # Keywords
+        "llm_query": "Explain machine learning based on the provided context."
+    }
+    mock_llm.get_llm_response.return_value = json.dumps(rewrite_response)
+    
+    rewrite_result = rewrite_rewriter.transform_query("@knowledgebase What is machine learning?")
+    
+    # Test HyDE strategy
+    hyde_config = {
+        'trigger_phrase': '@knowledgebase',
+        'retrieval_strategy': 'hyde'
+    }
+    hyde_rewriter = QueryRewriter(mock_llm, hyde_config)
+    
+    hyde_response = {
+        "search_rag": True,
+        "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It uses algorithms to identify patterns in data and make predictions or classifications on new, unseen data.",  # Hypothetical document
+        "llm_query": "Explain machine learning based on the provided context."
+    }
+    mock_llm.get_llm_response.return_value = json.dumps(hyde_response)
+    
+    hyde_result = hyde_rewriter.transform_query("@knowledgebase What is machine learning?")
+    
+    # Compare results
+    assert rewrite_result['search_rag'] is True
+    assert hyde_result['search_rag'] is True
+    
+    # HyDE should produce much longer, more descriptive text
+    assert len(hyde_result['embedding_source_text']) > len(rewrite_result['embedding_source_text'])
+    assert len(hyde_result['embedding_source_text']) > 100  # Should be document-like
+    assert len(rewrite_result['embedding_source_text']) < 50  # Should be keyword-like
+
+def test_hyde_strategy_non_rag_queries():
+    """Test that HyDE strategy handles non-RAG queries correctly."""
+    mock_llm = create_mock_llm_client()
+    config = {
+        'trigger_phrase': '@knowledgebase',
+        'retrieval_strategy': 'hyde'
+    }
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock response for non-RAG query
+    mock_response = {
+        "search_rag": False,
+        "embedding_source_text": "",
+        "llm_query": "What is the weather today?"
+    }
+    mock_llm.get_llm_response.return_value = json.dumps(mock_response)
+    
+    result = rewriter.transform_query("What is the weather today?")
+    
+    assert result['search_rag'] is False
+    assert result['embedding_source_text'] == ""
+    assert result['llm_query'] == "What is the weather today?"
+
+def test_hyde_strategy_conversational_queries():
+    """Test that HyDE strategy handles conversational follow-ups correctly."""
+    mock_llm = create_mock_llm_client()
+    config = {
+        'trigger_phrase': '@knowledgebase',
+        'retrieval_strategy': 'hyde'
+    }
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock response for conversational follow-up
+    mock_response = {
+        "search_rag": False,
+        "embedding_source_text": "",
+        "llm_query": "Tell me more about that approach based on context in previous conversation."
+    }
+    mock_llm.get_llm_response.return_value = json.dumps(mock_response)
+    
+    result = rewriter.transform_query("Tell me more about that approach")
+    
+    assert result['search_rag'] is False
+    assert result['embedding_source_text'] == ""
+    assert "based on context in previous conversation" in result['llm_query']
+
+def test_hyde_strategy_fallback_behavior():
+    """Test that HyDE strategy fallback works correctly."""
+    mock_llm = create_mock_llm_client()
+    config = {
+        'trigger_phrase': '@knowledgebase',
+        'retrieval_strategy': 'hyde'
+    }
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock LLM exception to trigger fallback
+    mock_llm.get_llm_response.side_effect = Exception("LLM service unavailable")
+    
+    result = rewriter.transform_query("@knowledgebase What is Python?")
+    
+    # Should use fallback logic (same for both strategies)
+    assert result['search_rag'] is True
+    assert result['embedding_source_text'] == "What is Python?"
+    assert result['llm_query'] == "@knowledgebase What is Python?"
+
+def test_hyde_strategy_connection_test():
+    """Test connection test works with HyDE strategy."""
+    mock_llm = create_mock_llm_client()
+    config = {
+        'trigger_phrase': '@knowledgebase',
+        'retrieval_strategy': 'hyde'
+    }
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock successful response
+    mock_response = {
+        "search_rag": True,
+        "embedding_source_text": "Artificial intelligence is the simulation of human intelligence in machines that are programmed to think and learn like humans. It encompasses various subfields including machine learning, natural language processing, and computer vision.",
+        "llm_query": "What is artificial intelligence based on the provided context?"
+    }
+    mock_llm.get_llm_response.return_value = json.dumps(mock_response)
+    
+    success = rewriter.test_connection()
+    assert success is True
