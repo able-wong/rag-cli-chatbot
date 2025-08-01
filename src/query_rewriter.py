@@ -28,10 +28,23 @@ class QueryRewriter:
     
     def _build_system_prompt(self) -> str:
         """Build the system prompt for query transformation based on retrieval strategy."""
-        if self.retrieval_strategy == 'hyde':
-            return self._build_hyde_system_prompt()
-        else:
-            return self._build_rewrite_system_prompt()
+        return self._get_strategy_prompt_builder()
+    
+    def _get_strategy_prompt_builder(self) -> str:
+        """
+        Strategy selection method that encapsulates the logic for choosing the appropriate
+        system prompt based on the configured retrieval strategy.
+        
+        Returns:
+            The appropriate system prompt string for the configured strategy
+        """
+        strategy_map = {
+            'hyde': self._build_hyde_system_prompt,
+            'rewrite': self._build_rewrite_system_prompt
+        }
+        
+        prompt_builder = strategy_map.get(self.retrieval_strategy, self._build_rewrite_system_prompt)
+        return prompt_builder()
     
     def _build_rewrite_system_prompt(self) -> str:
         """Build the system prompt for the default rewrite strategy."""
@@ -39,7 +52,7 @@ class QueryRewriter:
 
 You must respond with a JSON object containing exactly these fields:
 - "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
-- "embedding_source_text": string - Core topic keywords optimized for vector similarity search (only needed if search_rag=true)
+- "embedding_source_text": string - Core topic keywords only, ignoring instruction words like "explain", "pros and cons" (only needed if search_rag=true)
 - "llm_query": string - Clear instruction for the LLM with appropriate context reference
 
 Context source logic:
@@ -51,12 +64,6 @@ Context source logic:
      Use "based on context in previous conversation" in llm_query
    - **General standalone questions**: 
      No context reference needed in llm_query
-
-**IMPORTANT for embedding_source_text (rewrite strategy):**
-- Extract ONLY the core topic/subject keywords for search
-- IGNORE instruction words like: "explain", "what is", "how to", "pros and cons", "advantages", "disadvantages", "compare", "cite sources", "tell me about"
-- Focus on the MAIN SUBJECT the user wants to search for
-- Use 2-5 relevant keywords related to the core topic
 
 Examples:
 
@@ -86,7 +93,7 @@ Always respond with valid JSON only. Do not include any other text or formatting
 
 You must respond with a JSON object containing exactly these fields:
 - "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
-- "embedding_source_text": string - A hypothetical document or passage that would contain the answer to the user's question (only needed if search_rag=true)
+- "embedding_source_text": string - A focused 2-4 sentence hypothetical document that answers the core topic (only needed if search_rag=true)
 - "llm_query": string - Clear instruction for the LLM with appropriate context reference
 
 Context source logic:
@@ -99,14 +106,6 @@ Context source logic:
      Use "based on context in previous conversation" in llm_query
    - **General standalone questions**: 
      No context reference needed in llm_query
-
-**IMPORTANT for embedding_source_text (HyDE strategy):**
-When search_rag=true, generate a focused hypothetical document that:
-- Directly answers the CORE TOPIC the user wants to search for
-- Uses natural, informative language about the main subject
-- Focuses on the key concept, not the instruction format
-- Is 2-4 sentences long for optimal embedding
-- Ignores instruction words and focuses on the substantive content
 
 Examples:
 

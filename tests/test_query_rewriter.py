@@ -494,7 +494,7 @@ def test_rewrite_strategy_system_prompt_selection():
     rewriter = QueryRewriter(mock_llm, config)
     
     # Check that the system prompt contains rewrite-specific instructions
-    assert "Core topic keywords optimized for vector similarity search" in rewriter.system_prompt
+    assert "Core topic keywords only, ignoring instruction words" in rewriter.system_prompt
     assert "HyDE" not in rewriter.system_prompt
 
 def test_hyde_strategy_hypothetical_document_generation():
