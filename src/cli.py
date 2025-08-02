@@ -44,6 +44,7 @@ class RAGCLI:
         self.top_k = self.rag_config.get('top_k', 5)
         self.max_context_length = self.rag_config.get('max_context_length', 8000)
         self.max_history_length = self.cli_config.get('max_history_length', 20)
+        self.use_hybrid_search = self.rag_config.get('use_hybrid_search', False)
         
         self._initialize_clients()
         self._initialize_conversation()
@@ -96,15 +97,26 @@ class RAGCLI:
     
     def _get_help_text(self) -> str:
         """Return the help text string."""
-        return ("🤖 Welcome to RAG CLI Chatbot!\n\n"
-                "Commands:\n"
-                "- Type normally for general chat\n"
-                "- Use @knowledgebase to search the knowledge base\n"
-                "- /clear - Clear conversation history\n"
-                "- /help - Display this help message\n"
-                "- /info - Display system configuration\n"
-                "- /bye - Exit the chatbot\n"
-                "- /doc <number> - View detailed document content")
+        base_help = ("🤖 Welcome to RAG CLI Chatbot!\n\n"
+                    "Commands:\n"
+                    "- Type normally for general chat\n"
+                    "- Use @knowledgebase to search the knowledge base\n"
+                    "- /clear - Clear conversation history\n"
+                    "- /help - Display this help message\n"
+                    "- /info - Display system configuration\n"
+                    "- /bye - Exit the chatbot\n"
+                    "- /doc <number> - View detailed document content")
+        
+        # Add hybrid search examples if enabled
+        if self.use_hybrid_search:
+            hybrid_help = ("\n\nHybrid Search Features:\n"
+                          "- Filter by author: '@knowledgebase papers by Smith'\n"
+                          "- Filter by date: '@knowledgebase articles from 2023'\n"
+                          "- Filter by tags: '@knowledgebase documents about Python'\n"
+                          "- Combined filters: '@knowledgebase Smith's papers about AI from 2023'")
+            base_help += hybrid_help
+        
+        return base_help
 
     def _display_panel_message(self, message: str, title: str, border_style: str = "blue"):
         """Helper method to display a message within a rich.panel.Panel."""
@@ -162,7 +174,9 @@ class RAGCLI:
 
         # RAG settings
         retrieval_strategy = self.config_manager.get('rag.retrieval_strategy', 'rewrite')
+        hybrid_search_enabled = self.config_manager.get('rag.use_hybrid_search', False)
         table.add_row("RAG", "retrieval_strategy", retrieval_strategy)
+        table.add_row("", "hybrid_search", str(hybrid_search_enabled))
         table.add_row("", "top_k", str(self.config_manager.get('rag.top_k', 'N/A')))
         table.add_row("", "min_score", str(self.config_manager.get('rag.min_score', 'N/A')))
         
@@ -234,18 +248,26 @@ class RAGCLI:
             'llm_query': user_input
         }
     
-    def _perform_rag_search(self, embedding_text: str) -> List[Any]:
-        """Perform RAG search using optimized embedding text and return results."""
+    def _perform_rag_search(self, embedding_text: str, filters: Dict[str, Any] = None) -> List[Any]:
+        """Perform RAG search using optimized embedding text and optional filters."""
         try:
             # Generate embedding for the optimized text
             query_embedding = self.embedding_client.get_embedding(embedding_text)
             
+            # Prepare search parameters
+            search_params = {
+                'query_vector': query_embedding,
+                'limit': self.top_k,
+                'score_threshold': self.min_score
+            }
+            
+            # Add filters if hybrid search is enabled and filters are provided
+            if self.use_hybrid_search and filters:
+                search_params['filters'] = filters
+                logger.info(f"Using hybrid search with filters: {list(filters.keys())}")
+            
             # Search in Qdrant
-            results = self.qdrant_db.search(
-                query_vector=query_embedding,
-                limit=self.top_k,
-                score_threshold=self.min_score
-            )
+            results = self.qdrant_db.search(**search_params)
             
             logger.info(f"RAG search returned {len(results)} results")
             return results
@@ -561,11 +583,18 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 use_rag = query_analysis['search_rag']
                 
                 if use_rag:
-                    # Perform RAG search with optimized embedding text
+                    # Perform RAG search with optimized embedding text and optional filters
                     embedding_text = query_analysis['embedding_source_text']
+                    filters = query_analysis.get('filters', {})
+                    
                     search_display = embedding_text[:DISPLAY_TEXT_TRUNCATE_LENGTH] + "..." if len(embedding_text) > DISPLAY_TEXT_TRUNCATE_LENGTH else embedding_text
-                    self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}'...[/dim]")
-                    rag_results = self._perform_rag_search(embedding_text)
+                    if self.use_hybrid_search and filters:
+                        filter_info = ", ".join([f"{k}={v}" for k, v in filters.items() if v])
+                        self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}' (filters: {filter_info})...[/dim]")
+                    else:
+                        self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}'...[/dim]")
+                    
+                    rag_results = self._perform_rag_search(embedding_text, filters)
                     self.last_rag_results = rag_results
                     
                     if self._should_use_rag_context(rag_results):

@@ -6,6 +6,7 @@ A command-line chatbot with Retrieval-Augmented Generation (RAG) capabilities. S
 
 - **Interactive CLI Interface**: Rich terminal interface with colors and formatting
 - **RAG Capabilities**: Search and retrieve information from knowledge base
+- **Hybrid Search**: Natural language metadata filtering (author, date, tags)
 - **Dual Retrieval Strategies**: Choose between keyword-based "rewrite" or semantic "HyDE" search
 - **Conversational Context Awareness**: Intelligent follow-up handling without re-searching
 - **LLM-Based Query Transformation**: Smart query analysis and routing for better results
@@ -148,6 +149,44 @@ rag:
 - **Rewrite**: Start here for general use, good performance
 - **HyDE**: Switch if you need better retrieval of conceptually related content
 
+### Hybrid Search (Metadata Filtering)
+
+**NEW FEATURE**: Hybrid search combines semantic similarity with metadata filtering for more precise results.
+
+**Enable Hybrid Search**:
+```yaml
+rag:
+  use_hybrid_search: true  # Enable natural language metadata filtering
+  retrieval_strategy: "rewrite"  # Works with both rewrite and hyde
+  trigger_phrase: "@knowledgebase"
+```
+
+**Requirements:**
+- Qdrant collection must have payload indexes for: `tags`, `author`, `publication_date`
+- These indexes are created during document ingestion
+- System logs warnings if indexes are missing (performance impact)
+
+**Natural Language Examples:**
+
+| User Query | Extracted Filters | Result |
+|------------|------------------|---------|
+| `@knowledgebase papers by John Smith` | `{"author": "John Smith"}` | Only documents by John Smith |
+| `@knowledgebase articles from 2023` | `{"publication_date": "2023"}` | Only 2023 publications |
+| `@knowledgebase documents about Python` | `{"tags": ["python"]}` | Only Python-tagged documents |
+| `@knowledgebase Smith's AI papers from 2023` | `{"author": "Smith", "tags": ["ai"], "publication_date": "2023"}` | Combined filtering |
+| `@knowledgebase search on vibe coding from John Wong published in March 2025` | `{"author": "John Wong", "tags": ["vibe coding"], "publication_date": "2025-03"}` | Multi-attribute precision |
+
+**Benefits:**
+- **Precision**: Combine semantic search with structured filtering
+- **Natural Interface**: No complex filter syntax required  
+- **Flexible**: Works with both retrieval strategies
+- **Performance**: Uses Qdrant indexes for efficient filtering
+
+**Performance Notes:**
+- Individual indexes only (Qdrant doesn't support compound indexes)
+- Filter intersection handled by Qdrant efficiently
+- Warning logs if required indexes are missing
+
 ### CLI Settings
 
 **System Prompt Customization**:
@@ -184,7 +223,8 @@ cli:
 
 - **General Chat**: Type normally to chat without knowledge base
 - **Knowledge Base Search**: Use `@knowledgebase` to trigger RAG search
-- **System Info**: `/info` - Display current configuration including retrieval strategy
+- **Hybrid Search**: Use natural language filters: `@knowledgebase papers by Smith from 2023`
+- **System Info**: `/info` - Display current configuration including hybrid search status
 - **Clear History**: `/clear` - Reset conversation
 - **Exit**: `/bye` - Exit the application
 - **View Documents**: `/doc <number>` - See full document content
@@ -220,10 +260,25 @@ Assistant: Based on our previous discussion about Python, here are the popular w
 You: What about Django specifically?
 💭 Thinking with LLM prompt 'Explain Django specifically based on context in previous conver...'...
 Assistant: Django, as mentioned in our conversation, is a high-level Python web framework...
+
+You: @knowledgebase papers by John Smith about machine learning from 2023
+🔍 Searching knowledge base with 'machine learning' (filters: author=John Smith, tags=machine learning, publication_date=2023)...
+💭 Thinking with LLM prompt 'Based on the provided context, provide information about machine learning from John Smith's papers...'...
+Assistant: Based on John Smith's 2023 papers about machine learning from the knowledge base...
+
+📚 Retrieved from knowledge base:
+┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ # ┃ Source                                      ┃ Score  ┃
+┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ 1 │ ML_Fundamentals_Smith_2023.pdf             │ 0.934  │
+│ 2 │ Deep_Learning_Smith_2023.pdf               │ 0.889  │
+└───┴─────────────────────────────────────────────┴────────┘
+💡 Use /doc <number> to see full content
 ```
 
 **Key Features Demonstrated:**
 - **Knowledge Base Search**: `@knowledgebase` triggers RAG search with optimized queries
+- **Hybrid Search**: Natural language metadata filtering combines semantic search with structured filters
 - **HyDE Retrieval**: Shows hypothetical document generation for semantic search (example uses HyDE strategy)
 - **Conversational Follow-ups**: "Tell me more..." uses conversation history without re-searching
 - **Smart Context Switching**: System intelligently chooses between knowledge base and conversation context

@@ -105,6 +105,26 @@ rag:
   # - Switch to "hyde" if you need better retrieval of conceptually related documents
   # - Test both strategies with your specific knowledge base to determine optimal choice
   
+  # HYBRID SEARCH SETTINGS
+  use_hybrid_search: false             # Enable metadata filtering from natural language queries
+  
+  # HYBRID SEARCH EXPLANATION:
+  # When enabled, the system can extract metadata filters from natural language queries:
+  # - "papers by John Smith" → filters by author
+  # - "articles from 2023" → filters by publication year
+  # - "documents about Python programming" → filters by tags
+  # - "Smith's papers about AI from March 2023" → combines multiple filters
+  #
+  # Requirements:
+  # - Qdrant collection must have payload indexes for: tags, author, publication_date
+  # - These indexes are created during document ingestion
+  # - System will log warnings if indexes are missing (performance impact)
+  #
+  # Benefits:
+  # - More precise search results by combining semantic similarity with metadata filtering
+  # - Natural language interface - no need to learn complex filter syntax
+  # - Works with both "rewrite" and "hyde" retrieval strategies
+  
   # SEARCH SETTINGS
   top_k: 10                             # Number of documents to retrieve
   min_score: 0.3                       # Minimum similarity score threshold

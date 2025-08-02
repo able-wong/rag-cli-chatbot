@@ -1,6 +1,4 @@
 import logging
-import json
-import re
 from typing import Dict, Any
 from llm_client import LLMClient
 
@@ -54,10 +52,18 @@ You must respond with a JSON object containing exactly these fields:
 - "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
 - "embedding_source_text": string - Core topic keywords only, ignoring instruction words like "explain", "pros and cons" (only needed if search_rag=true)
 - "llm_query": string - Clear instruction for the LLM with appropriate context reference
+- "filters": object - Optional metadata filters extracted from the query (only when search_rag=true)
 
 Context source logic:
 1. **If "{self.trigger_phrase}" present**: Always search knowledge base
    - Use "based on the provided context" in llm_query
+   - Extract metadata filters from natural language:
+     * Author: "papers by Smith", "articles by John Doe" → {{"author": "Smith"}}
+     * Date: "from 2023", "published in March 2025", "last year" → {{"publication_date": "2023"}}
+     * Explicit tags: "with tag python", "tagged as machine learning" → {{"tags": ["python"]}}
+     * Multiple tags: "with tags python, AI" → {{"tags": ["python", "ai"]}}
+     * Combined: "Smith's papers with tag AI from 2023" → {{"author": "Smith", "tags": ["ai"], "publication_date": "2023"}}
+     * NO auto topic extraction: "about Python", "on machine learning" → No tag filter (broader search)
    
 2. **If no "{self.trigger_phrase}"**: Analyze if query references previous conversation
    - **Conversational references** (uses "that", "it", "the X part", "more about", "tell me more", "what you mentioned", etc.):
@@ -68,22 +74,34 @@ Context source logic:
 Examples:
 
 User: "What is machine learning?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications."}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications.", "filters": {{}}}}
 
 User: "{self.trigger_phrase} How does neural network training work?"
-Response: {{"search_rag": true, "embedding_source_text": "neural network training", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved."}}
+Response: {{"search_rag": true, "embedding_source_text": "neural network training", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "filters": {{}}}}
 
-User: "{self.trigger_phrase} search on vibe coding related topics. then, explain what is vibe coding, pros and cons, cite sources."
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding programming approach", "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources."}}
+User: "{self.trigger_phrase} papers by John Smith about machine learning"
+Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "filters": {{"author": "John Smith"}}}}
+
+User: "{self.trigger_phrase} articles from 2023 about Python programming"
+Response: {{"search_rag": true, "embedding_source_text": "Python programming", "llm_query": "Based on the provided context, provide information about Python programming from 2023 articles.", "filters": {{"publication_date": "2023"}}}}
+
+User: "{self.trigger_phrase} search on vibe coding from John Wong published in March 2025, then explain what is vibe coding, and pros/cons"
+Response: {{"search_rag": true, "embedding_source_text": "vibe coding programming approach", "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources.", "filters": {{"author": "John Wong", "publication_date": "2025-03"}}}}
+
+User: "{self.trigger_phrase} papers by John Smith with tag machine learning"
+Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
+
+User: "{self.trigger_phrase} articles with tags python, AI from 2023"
+Response: {{"search_rag": true, "embedding_source_text": "python AI artificial intelligence", "llm_query": "Based on the provided context, provide information about Python and AI from 2023 articles.", "filters": {{"tags": ["python", "ai"], "publication_date": "2023"}}}}
 
 User: "Tell me more about the automation benefits"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation."}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "filters": {{}}}}
 
 User: "Can you elaborate on that approach?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation."}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation.", "filters": {{}}}}
 
 User: "{self.trigger_phrase} what are the differences between REST and GraphQL APIs?"  
-Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL APIs", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases."}}
+Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL APIs", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases.", "filters": {{}}}}
 
 Always respond with valid JSON only. Do not include any other text or formatting."""
     
@@ -95,11 +113,19 @@ You must respond with a JSON object containing exactly these fields:
 - "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
 - "embedding_source_text": string - A focused 2-4 sentence hypothetical document that answers the core topic (only needed if search_rag=true)
 - "llm_query": string - Clear instruction for the LLM with appropriate context reference
+- "filters": object - Optional metadata filters extracted from the query (only when search_rag=true)
 
 Context source logic:
 1. **If "{self.trigger_phrase}" present**: Always search knowledge base
    - Generate a hypothetical document/passage that would answer the user's question
    - Use "based on the provided context" in llm_query
+   - Extract metadata filters from natural language:
+     * Author: "papers by Smith", "articles by John Doe" → {{"author": "Smith"}}
+     * Date: "from 2023", "published in March 2025", "last year" → {{"publication_date": "2023"}}
+     * Explicit tags: "with tag python", "tagged as machine learning" → {{"tags": ["python"]}}
+     * Multiple tags: "with tags python, AI" → {{"tags": ["python", "ai"]}}
+     * Combined: "Smith's papers with tag AI from 2023" → {{"author": "Smith", "tags": ["ai"], "publication_date": "2023"}}
+     * NO auto topic extraction: "about Python", "on machine learning" → No tag filter (broader search)
    
 2. **If no "{self.trigger_phrase}"**: Analyze if query references previous conversation
    - **Conversational references** (uses "that", "it", "the X part", "more about", "tell me more", "what you mentioned", etc.):
@@ -110,25 +136,31 @@ Context source logic:
 Examples:
 
 User: "What is machine learning?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications."}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications.", "filters": {{}}}}
 
 User: "{self.trigger_phrase} How does neural network training work?"
-Response: {{"search_rag": true, "embedding_source_text": "Neural network training is a process where the network learns from data through backpropagation and gradient descent. During training, the network adjusts its weights and biases by calculating the error between predicted and actual outputs, then propagating this error backward through the layers. The gradient descent algorithm optimizes these parameters iteratively to minimize the loss function, enabling the network to improve its predictions over time.", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved."}}
+Response: {{"search_rag": true, "embedding_source_text": "Neural network training is a process where the network learns from data through backpropagation and gradient descent. During training, the network adjusts its weights and biases by calculating the error between predicted and actual outputs, then propagating this error backward through the layers. The gradient descent algorithm optimizes these parameters iteratively to minimize the loss function, enabling the network to improve its predictions over time.", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "filters": {{}}}}
 
-User: "{self.trigger_phrase} search on vibe coding related topics. then, explain what is vibe coding, pros and cons, cite sources."
-Response: {{"search_rag": true, "embedding_source_text": "Vibe coding is a programming approach that emphasizes writing code based on intuition, flow state, and personal rhythm rather than strict methodologies. This coding style prioritizes developer comfort, creativity, and maintaining a natural coding rhythm. Practitioners focus on writing code that feels right and maintains consistent energy levels during development sessions.", "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources."}}
+User: "{self.trigger_phrase} papers by John Smith about machine learning"
+Response: {{"search_rag": true, "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience. Common applications include image recognition, natural language processing, and predictive analytics across various industries.", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "filters": {{"author": "John Smith"}}}}
+
+User: "{self.trigger_phrase} search on vibe coding from John Wong published in March 2025, then explain what is vibe coding, and pros/cons"
+Response: {{"search_rag": true, "embedding_source_text": "Vibe coding is a programming approach that emphasizes writing code based on intuition, flow state, and personal rhythm rather than strict methodologies. This coding style prioritizes developer comfort, creativity, and maintaining a natural coding rhythm. Practitioners focus on writing code that feels right and maintains consistent energy levels during development sessions.", "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources.", "filters": {{"author": "John Wong", "publication_date": "2025-03"}}}}
+
+User: "{self.trigger_phrase} papers by John Smith with tag machine learning"  
+Response: {{"search_rag": true, "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience. Common applications include image recognition, natural language processing, and predictive analytics across various industries.", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
 
 User: "Tell me more about the automation benefits"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation."}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "filters": {{}}}}
 
 User: "Can you elaborate on that approach?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation."}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation.", "filters": {{}}}}
 
 User: "What's the weather today?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "What's the weather today?"}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "What's the weather today?", "filters": {{}}}}
 
 User: "{self.trigger_phrase} what are the differences between REST and GraphQL APIs?"  
-Response: {{"search_rag": true, "embedding_source_text": "REST and GraphQL are both API design approaches with distinct characteristics. REST uses multiple endpoints with fixed data structures and HTTP methods, making it simple and cacheable but potentially leading to over-fetching or under-fetching of data. GraphQL uses a single endpoint with flexible queries that allow clients to request exactly the data they need, providing better performance and developer experience but with increased complexity and learning curve.", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases."}}
+Response: {{"search_rag": true, "embedding_source_text": "REST and GraphQL are both API design approaches with distinct characteristics. REST uses multiple endpoints with fixed data structures and HTTP methods, making it simple and cacheable but potentially leading to over-fetching or under-fetching of data. GraphQL uses a single endpoint with flexible queries that allow clients to request exactly the data they need, providing better performance and developer experience but with increased complexity and learning curve.", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases.", "filters": {{}}}}
 
 Always respond with valid JSON only. Do not include any other text or formatting."""
 
@@ -152,16 +184,13 @@ Always respond with valid JSON only. Do not include any other text or formatting
                 {"role": "user", "content": user_query}
             ]
             
-            # Get LLM response
+            # Get JSON response directly (handles parsing and markdown wrappers)
             logger.debug(f"Transforming query: {user_query}")
-            response = self.llm_client.get_llm_response(
+            result = self.llm_client.get_json_response(
                 messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens
             )
-            
-            # Parse JSON response
-            result = self._parse_json_response(response)
             
             # Validate and return result
             validated_result = self._validate_result(result, user_query)
@@ -172,44 +201,6 @@ Always respond with valid JSON only. Do not include any other text or formatting
             logger.error(f"Query transformation failed: {e}")
             return self._create_fallback_result(user_query)
     
-    def _parse_json_response(self, response: str) -> Dict[str, Any]:
-        """
-        Parse JSON response from LLM, handling various formats.
-        
-        Args:
-            response: Raw response from LLM
-            
-        Returns:
-            Parsed JSON dictionary
-            
-        Raises:
-            ValueError: If JSON cannot be parsed
-        """
-        # Try to parse as direct JSON first
-        try:
-            return json.loads(response.strip())
-        except json.JSONDecodeError:
-            pass
-        
-        # Try to extract JSON from markdown code blocks
-        json_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
-        match = re.search(json_pattern, response, re.DOTALL | re.IGNORECASE)
-        if match:
-            try:
-                return json.loads(match.group(1))
-            except json.JSONDecodeError:
-                pass
-        
-        # Try to find JSON-like content in the response
-        json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-        match = re.search(json_pattern, response, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
-        
-        raise ValueError(f"Could not parse JSON from response: {response}")
     
     def _validate_result(self, result: Dict[str, Any], original_query: str) -> Dict[str, Any]:
         """
@@ -228,6 +219,10 @@ Always respond with valid JSON only. Do not include any other text or formatting
             if field not in result:
                 logger.warning(f"Missing field '{field}' in transformation result")
                 return self._create_fallback_result(original_query)
+        
+        # Ensure filters field exists (optional but should be present)
+        if 'filters' not in result:
+            result['filters'] = {}
         
         # Validate search_rag is boolean
         if not isinstance(result['search_rag'], bool):
@@ -248,6 +243,11 @@ Always respond with valid JSON only. Do not include any other text or formatting
         if not isinstance(result['llm_query'], str) or not result['llm_query'].strip():
             logger.warning("llm_query field is empty or invalid")
             return self._create_fallback_result(original_query)
+        
+        # Validate filters field is a dictionary
+        if not isinstance(result['filters'], dict):
+            logger.warning("filters field is not a dictionary, resetting to empty dict")
+            result['filters'] = {}
         
         # Double-check search_rag logic against actual trigger detection
         actual_has_trigger = self.trigger_phrase.lower() in original_query.lower()
@@ -279,7 +279,8 @@ Always respond with valid JSON only. Do not include any other text or formatting
         fallback_result = {
             'search_rag': search_rag,
             'embedding_source_text': clean_query,
-            'llm_query': user_query
+            'llm_query': user_query,
+            'filters': {}
         }
         
         logger.info("Using fallback query transformation")
@@ -301,14 +302,12 @@ Always respond with valid JSON only. Do not include any other text or formatting
                 {"role": "user", "content": test_query}
             ]
             
-            response = self.llm_client.get_llm_response(
+            # Try to get JSON response directly  
+            parsed_result = self.llm_client.get_json_response(
                 messages,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens
             )
-            
-            # Try to parse the response
-            parsed_result = self._parse_json_response(response)
             
             # Validate the test result has required fields
             expected_fields = ['search_rag', 'embedding_source_text', 'llm_query']
