@@ -113,7 +113,7 @@ def test_qdrant_filter_builder_publication_date_year(mock_qdrant_client_class):
     config = {'host': 'localhost', 'port': 6333, 'collection_name': 'test'}
     db = QdrantDB(config)
     
-    # Test year filter (should use string matching)
+    # Test year filter (now converted to DatetimeRange)
     filters = {"publication_date": "2023"}
     qdrant_filter = db._build_qdrant_filter(filters)
     
@@ -121,8 +121,11 @@ def test_qdrant_filter_builder_publication_date_year(mock_qdrant_client_class):
     condition = qdrant_filter.must[0]
     assert isinstance(condition, FieldCondition)
     assert condition.key == "publication_date"
-    assert isinstance(condition.match, MatchValue)
-    assert condition.match.value == "2023"
+    from qdrant_client.models import DatetimeRange
+    assert isinstance(condition.range, DatetimeRange)
+    # Year 2023 should be converted to 2023-01-01 to 2024-01-01
+    assert condition.range.gte.strftime('%Y-%m-%d') == "2023-01-01"
+    assert condition.range.lt.strftime('%Y-%m-%d') == "2024-01-01"
 
 @patch('qdrant_db.QdrantClient')
 def test_qdrant_filter_builder_publication_date_exact(mock_qdrant_client_class):

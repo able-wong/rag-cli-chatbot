@@ -59,10 +59,17 @@ Context source logic:
    - Use "based on the provided context" in llm_query
    - Extract metadata filters from natural language:
      * Author: "papers by Smith", "articles by John Doe" → {{"author": "Smith"}}
-     * Date: "from 2023", "published in March 2025", "last year" → {{"publication_date": "2023"}}
+     * Date ranges: Convert natural language to ISO date ranges for efficient DATETIME index filtering:
+       - Years: "from 2023", "in 2024" → {{"publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}
+       - Quarters: "2025 Q1", "first quarter 2024" → {{"publication_date": {{"gte": "2025-01-01", "lt": "2025-04-01"}}}}
+       - Months: "March 2025", "published in June 2024" → {{"publication_date": {{"gte": "2025-03-01", "lt": "2025-04-01"}}}}
+       - Half years: "first half 2024", "H1 2025" → {{"publication_date": {{"gte": "2024-01-01", "lt": "2024-07-01"}}}}
+       - Relative dates: "last year" (from Aug 2025) → {{"publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}
+       - Since dates: "since 2023", "from 2024 onwards" → {{"publication_date": {{"gte": "2023-01-01"}}}}
+       - Before dates: "before 2024", "until 2023" → {{"publication_date": {{"lt": "2024-01-01"}}}}
      * Explicit tags: "with tag python", "tagged as machine learning" → {{"tags": ["python"]}}
      * Multiple tags: "with tags python, AI" → {{"tags": ["python", "ai"]}}
-     * Combined: "Smith's papers with tag AI from 2023" → {{"author": "Smith", "tags": ["ai"], "publication_date": "2023"}}
+     * Combined: "Smith's papers with tag AI from 2023" → {{"author": "Smith", "tags": ["ai"], "publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}
      * NO auto topic extraction: "about Python", "on machine learning" → No tag filter (broader search)
    
 2. **If no "{self.trigger_phrase}"**: Analyze if query references previous conversation
@@ -83,16 +90,25 @@ User: "{self.trigger_phrase} papers by John Smith about machine learning"
 Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "filters": {{"author": "John Smith"}}}}
 
 User: "{self.trigger_phrase} articles from 2023 about Python programming"
-Response: {{"search_rag": true, "embedding_source_text": "Python programming", "llm_query": "Based on the provided context, provide information about Python programming from 2023 articles.", "filters": {{"publication_date": "2023"}}}}
+Response: {{"search_rag": true, "embedding_source_text": "Python programming", "llm_query": "Based on the provided context, provide information about Python programming from 2023 articles.", "filters": {{"publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}}}
 
 User: "{self.trigger_phrase} search on vibe coding from John Wong published in March 2025, then explain what is vibe coding, and pros/cons"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding programming approach", "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources.", "filters": {{"author": "John Wong", "publication_date": "2025-03"}}}}
+Response: {{"search_rag": true, "embedding_source_text": "vibe coding programming approach", "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources.", "filters": {{"author": "John Wong", "publication_date": {{"gte": "2025-03-01", "lt": "2025-04-01"}}}}}}
 
 User: "{self.trigger_phrase} papers by John Smith with tag machine learning"
 Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
 
 User: "{self.trigger_phrase} articles with tags python, AI from 2023"
-Response: {{"search_rag": true, "embedding_source_text": "python AI artificial intelligence", "llm_query": "Based on the provided context, provide information about Python and AI from 2023 articles.", "filters": {{"tags": ["python", "ai"], "publication_date": "2023"}}}}
+Response: {{"search_rag": true, "embedding_source_text": "python AI artificial intelligence", "llm_query": "Based on the provided context, provide information about Python and AI from 2023 articles.", "filters": {{"tags": ["python", "ai"], "publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}}}
+
+User: "{self.trigger_phrase} papers from 2025 Q1 about machine learning"
+Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning from Q1 2025 papers.", "filters": {{"publication_date": {{"gte": "2025-01-01", "lt": "2025-04-01"}}}}}}
+
+User: "{self.trigger_phrase} articles by John Wong since 2024"
+Response: {{"search_rag": true, "embedding_source_text": "John Wong articles", "llm_query": "Based on the provided context, provide information from John Wong's articles published since 2024.", "filters": {{"author": "John Wong", "publication_date": {{"gte": "2024-01-01"}}}}}}
+
+User: "{self.trigger_phrase} documents published in first half of 2024"
+Response: {{"search_rag": true, "embedding_source_text": "documents first half 2024", "llm_query": "Based on the provided context, provide information from documents published in the first half of 2024.", "filters": {{"publication_date": {{"gte": "2024-01-01", "lt": "2024-07-01"}}}}}}
 
 User: "Tell me more about the automation benefits"
 Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "filters": {{}}}}
@@ -121,10 +137,17 @@ Context source logic:
    - Use "based on the provided context" in llm_query
    - Extract metadata filters from natural language:
      * Author: "papers by Smith", "articles by John Doe" → {{"author": "Smith"}}
-     * Date: "from 2023", "published in March 2025", "last year" → {{"publication_date": "2023"}}
+     * Date ranges: Convert natural language to ISO date ranges for efficient DATETIME index filtering:
+       - Years: "from 2023", "in 2024" → {{"publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}
+       - Quarters: "2025 Q1", "first quarter 2024" → {{"publication_date": {{"gte": "2025-01-01", "lt": "2025-04-01"}}}}
+       - Months: "March 2025", "published in June 2024" → {{"publication_date": {{"gte": "2025-03-01", "lt": "2025-04-01"}}}}
+       - Half years: "first half 2024", "H1 2025" → {{"publication_date": {{"gte": "2024-01-01", "lt": "2024-07-01"}}}}
+       - Relative dates: "last year" (from Aug 2025) → {{"publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}
+       - Since dates: "since 2023", "from 2024 onwards" → {{"publication_date": {{"gte": "2023-01-01"}}}}
+       - Before dates: "before 2024", "until 2023" → {{"publication_date": {{"lt": "2024-01-01"}}}}
      * Explicit tags: "with tag python", "tagged as machine learning" → {{"tags": ["python"]}}
      * Multiple tags: "with tags python, AI" → {{"tags": ["python", "ai"]}}
-     * Combined: "Smith's papers with tag AI from 2023" → {{"author": "Smith", "tags": ["ai"], "publication_date": "2023"}}
+     * Combined: "Smith's papers with tag AI from 2023" → {{"author": "Smith", "tags": ["ai"], "publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}
      * NO auto topic extraction: "about Python", "on machine learning" → No tag filter (broader search)
    
 2. **If no "{self.trigger_phrase}"**: Analyze if query references previous conversation
@@ -145,7 +168,7 @@ User: "{self.trigger_phrase} papers by John Smith about machine learning"
 Response: {{"search_rag": true, "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience. Common applications include image recognition, natural language processing, and predictive analytics across various industries.", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "filters": {{"author": "John Smith"}}}}
 
 User: "{self.trigger_phrase} search on vibe coding from John Wong published in March 2025, then explain what is vibe coding, and pros/cons"
-Response: {{"search_rag": true, "embedding_source_text": "Vibe coding is a programming approach that emphasizes writing code based on intuition, flow state, and personal rhythm rather than strict methodologies. This coding style prioritizes developer comfort, creativity, and maintaining a natural coding rhythm. Practitioners focus on writing code that feels right and maintains consistent energy levels during development sessions.", "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources.", "filters": {{"author": "John Wong", "publication_date": "2025-03"}}}}
+Response: {{"search_rag": true, "embedding_source_text": "Vibe coding is a programming approach that emphasizes writing code based on intuition, flow state, and personal rhythm rather than strict methodologies. This coding style prioritizes developer comfort, creativity, and maintaining a natural coding rhythm. Practitioners focus on writing code that feels right and maintains consistent energy levels during development sessions.", "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources.", "filters": {{"author": "John Wong", "publication_date": {{"gte": "2025-03-01", "lt": "2025-04-01"}}}}}}
 
 User: "{self.trigger_phrase} papers by John Smith with tag machine learning"  
 Response: {{"search_rag": true, "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience. Common applications include image recognition, natural language processing, and predictive analytics across various industries.", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}

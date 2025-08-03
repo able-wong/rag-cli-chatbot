@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, ScoredPoint, Filter, FieldCondition, MatchValue, MatchAny
+from qdrant_client.models import Distance, VectorParams, PointStruct, ScoredPoint, Filter, FieldCondition, MatchValue, MatchAny, DatetimeRange
 
 logger = logging.getLogger(__name__)
 
@@ -234,18 +234,39 @@ class QdrantDB:
             # Handle publication_date filter
             if 'publication_date' in filters and filters['publication_date']:
                 pub_date = filters['publication_date']
-                # Handle different date formats
-                if isinstance(pub_date, str):
+                
+                # Handle new date range format with gte/lt for DATETIME index
+                if isinstance(pub_date, dict) and ('gte' in pub_date or 'lt' in pub_date):
+                    # Use datetime range for efficient filtering with DATETIME index
+                    range_conditions = {}
+                    if 'gte' in pub_date:
+                        range_conditions['gte'] = pub_date['gte']
+                    if 'lt' in pub_date:
+                        range_conditions['lt'] = pub_date['lt']
+                    
+                    conditions.append(
+                        FieldCondition(
+                            key="publication_date",
+                            range=DatetimeRange(**range_conditions)
+                        )
+                    )
+                    logger.debug(f"Applied publication_date range filter: {range_conditions}")
+                
+                # Handle legacy string format for backward compatibility
+                elif isinstance(pub_date, str):
                     if len(pub_date) == 4:  # Year only (e.g., "2023")
-                        # For date fields, we'll use string matching instead of range
-                        # since publication_date is stored as ISO string
+                        # Convert to range for better performance with DATETIME index
                         conditions.append(
                             FieldCondition(
                                 key="publication_date",
-                                match=MatchValue(value=pub_date)
+                                range=DatetimeRange(
+                                    gte=f"{pub_date}-01-01",
+                                    lt=f"{int(pub_date)+1}-01-01"
+                                )
                             )
                         )
-                    else:  # Exact date match
+                        logger.debug(f"Converted year '{pub_date}' to date range")
+                    else:  # Exact date match - keep as string match for compatibility
                         conditions.append(
                             FieldCondition(
                                 key="publication_date",

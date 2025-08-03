@@ -99,11 +99,11 @@ class TestQdrantIntegration:
                 field_schema=PayloadSchemaType.KEYWORD
             )
             
-            # Create index for publication_date field
+            # Create index for publication_date field (DATETIME for range filtering)
             cls.qdrant_db.client.create_payload_index(
                 collection_name=cls.test_collection_name,
                 field_name="publication_date",
-                field_schema=PayloadSchemaType.KEYWORD
+                field_schema=PayloadSchemaType.DATETIME
             )
             
             # Create index for title field (for completeness)
@@ -165,7 +165,7 @@ class TestQdrantIntegration:
                     "title": "Introduction to Python Programming",
                     "author": "John Smith",
                     "tags": ["python", "programming", "beginner"],
-                    "publication_date": "2023",
+                    "publication_date": "2023-01-01T00:00:00",
                     "content": "A comprehensive guide to Python programming for beginners.",
                     "doc_name": "doc1"  # Keep doc name in payload for test assertions
                 }
@@ -177,7 +177,7 @@ class TestQdrantIntegration:
                     "title": "Machine Learning with Python",
                     "author": "Jane Doe",
                     "tags": ["python", "machine learning", "ai"],
-                    "publication_date": "2024",
+                    "publication_date": "2024-01-01T00:00:00",
                     "content": "Advanced machine learning techniques using Python.",
                     "doc_name": "doc2"
                 }
@@ -189,7 +189,7 @@ class TestQdrantIntegration:
                     "title": "JavaScript Fundamentals",
                     "author": "John Smith",  # Same author as doc1, different topic
                     "tags": ["javascript", "web development", "frontend"],
-                    "publication_date": "2023",  # Same year as doc1
+                    "publication_date": "2023-01-01T00:00:00",  # Same year as doc1
                     "content": "Essential JavaScript concepts for web development.",
                     "doc_name": "doc3"
                 }
@@ -201,7 +201,7 @@ class TestQdrantIntegration:
                     "title": "Advanced Python Techniques", 
                     "author": "Alice Johnson",
                     "tags": ["python", "advanced", "optimization"],
-                    "publication_date": "2024",  # Same year as doc2
+                    "publication_date": "2024-01-01T00:00:00",  # Same year as doc2
                     "content": "Advanced Python programming patterns and optimization.",
                     "doc_name": "doc4"
                 }
@@ -213,7 +213,7 @@ class TestQdrantIntegration:
                     "title": "Deep Learning Fundamentals",
                     "author": "Bob Wilson",
                     "tags": ["machine learning", "deep learning", "neural networks"],
-                    "publication_date": "2024",
+                    "publication_date": "2024-01-01T00:00:00",
                     "content": "Introduction to deep learning and neural networks.",
                     "doc_name": "doc5"
                 }
@@ -225,7 +225,7 @@ class TestQdrantIntegration:
                     "title": "Web Development with React",
                     "author": "Jane Doe",  # Same author as doc2, different topic
                     "tags": ["javascript", "react", "web development"],
-                    "publication_date": "2025",
+                    "publication_date": "2025-01-01T00:00:00",
                     "content": "Building modern web applications with React.",
                     "doc_name": "doc6"
                 }
@@ -237,7 +237,7 @@ class TestQdrantIntegration:
                     "title": "Data Science with Python",
                     "author": "John Smith",  # Same author as doc1, doc3
                     "tags": ["python", "data science", "statistics"],
-                    "publication_date": "2025",
+                    "publication_date": "2025-01-01T00:00:00",
                     "content": "Comprehensive data science techniques using Python.",
                     "doc_name": "doc7"
                 }
@@ -249,7 +249,7 @@ class TestQdrantIntegration:
                     "title": "AI Ethics and Society",
                     "author": "Dr. Sarah Chen",
                     "tags": ["ai", "ethics", "society"],
-                    "publication_date": "2024",
+                    "publication_date": "2024-01-01T00:00:00",
                     "content": "Exploring the ethical implications of artificial intelligence.",
                     "doc_name": "doc8"
                 }
@@ -428,9 +428,10 @@ class TestQdrantIntegration:
         expected_doc_names = {"doc2", "doc4", "doc5", "doc8"}
         assert result_doc_names == expected_doc_names, f"Should return doc2, doc4, doc5, doc8, got {result_doc_names}"
         
-        # Verify all results are from 2024
+        # Verify all results are from 2024 (handle both legacy "2024" and ISO "2024-01-01T00:00:00" formats)
         for result in results:
-            assert result.payload["publication_date"] == "2024"
+            pub_date = result.payload["publication_date"]
+            assert pub_date.startswith("2024"), f"Should be from 2024, got {pub_date}"
         
         print(f"✅ Publication date filter test passed: Found {len(results)} documents from 2024")
     
@@ -484,7 +485,8 @@ class TestQdrantIntegration:
         # Verify all results match both criteria
         for result in results:
             assert result.payload["author"] == "John Smith"
-            assert result.payload["publication_date"] == "2023"
+            pub_date = result.payload["publication_date"]
+            assert pub_date.startswith("2023"), f"Should be from 2023, got {pub_date}"
         
         print(f"✅ Combined author+date filter test passed: Found {len(results)} documents")
     
@@ -511,7 +513,8 @@ class TestQdrantIntegration:
         # Verify all results match both criteria
         for result in results:
             assert "python" in result.payload["tags"]
-            assert result.payload["publication_date"] == "2024"
+            pub_date = result.payload["publication_date"]
+            assert pub_date.startswith("2024"), f"Should be from 2024, got {pub_date}"
         
         print(f"✅ Combined tags+date filter test passed: Found {len(results)} documents")
     
@@ -540,7 +543,8 @@ class TestQdrantIntegration:
         result = results[0]
         assert result.payload["author"] == "John Smith"
         assert "python" in result.payload["tags"]
-        assert result.payload["publication_date"] == "2023"
+        pub_date = result.payload["publication_date"]
+        assert pub_date.startswith("2023"), f"Should be from 2023, got {pub_date}"
         assert result.payload["title"] == "Introduction to Python Programming"
         
         print(f"✅ All criteria filter test passed: Found {len(results)} document matching all filters")
@@ -789,3 +793,254 @@ class TestQdrantIntegration:
             assert limited_results[i].score == all_results[i].score, "Scores should match"
         
         print("✅ Limit parameter test passed: Limit properly applied with filters")
+
+    @pytest.mark.integration
+    def test_datetime_range_filter_year_range(self):
+        """Test DatetimeRange filtering with year ranges (new feature)."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Filter by 2024 using new DatetimeRange format
+        filters = {
+            "publication_date": {
+                "gte": "2024-01-01",
+                "lt": "2025-01-01"
+            }
+        }
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            filters=filters
+        )
+        
+        # Should match same documents as legacy "2024" filter
+        assert len(results) == 4, f"Should find exactly 4 documents from 2024 using DatetimeRange, got {len(results)}"
+        
+        result_doc_names = {result.payload["doc_name"] for result in results}
+        expected_doc_names = {"doc2", "doc4", "doc5", "doc8"}
+        assert result_doc_names == expected_doc_names, f"Should return doc2, doc4, doc5, doc8, got {result_doc_names}"
+        
+        # Verify all results are from 2024
+        for result in results:
+            assert result.payload["publication_date"].startswith("2024"), f"All results should be from 2024, got {result.payload['publication_date']}"
+        
+        print(f"✅ DatetimeRange year filter test passed: Found {len(results)} documents from 2024")
+
+    @pytest.mark.integration
+    def test_datetime_range_filter_month_range(self):
+        """Test DatetimeRange filtering with month ranges."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Filter by March 2025 using DatetimeRange (no test data matches, but tests the functionality)
+        filters = {
+            "publication_date": {
+                "gte": "2025-03-01",
+                "lt": "2025-04-01"
+            }
+        }
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            filters=filters
+        )
+        
+        # Should find no matches in test data (our test data uses years only)
+        assert len(results) == 0, f"Should find no documents for March 2025 range in test data, got {len(results)}"
+        
+        print("✅ DatetimeRange month filter test passed: No matches for March 2025 (expected)")
+
+    @pytest.mark.integration
+    def test_datetime_range_filter_quarter_range(self):
+        """Test DatetimeRange filtering with quarter ranges (Q1 2024)."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Filter by Q1 2024 using DatetimeRange
+        filters = {
+            "publication_date": {
+                "gte": "2024-01-01",
+                "lt": "2024-04-01"
+            }
+        }
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            filters=filters
+        )
+        
+        # With our test data structure (year-only dates), this should match 2024 documents
+        # but the range is more restrictive than full year
+        # Our test documents use "2024" which should match this range
+        assert len(results) == 4, f"Should find 4 documents in Q1 2024 range, got {len(results)}"
+        
+        for result in results:
+            pub_date = result.payload["publication_date"]
+            assert pub_date.startswith("2024"), f"All results should be from 2024, got {pub_date}"
+        
+        print(f"✅ DatetimeRange quarter filter test passed: Found {len(results)} documents in Q1 2024")
+
+    @pytest.mark.integration
+    def test_datetime_range_filter_half_year_range(self):
+        """Test DatetimeRange filtering with half-year ranges."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Filter by first half of 2024
+        filters = {
+            "publication_date": {
+                "gte": "2024-01-01",
+                "lt": "2024-07-01"
+            }
+        }
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            filters=filters
+        )
+        
+        # Should match 2024 documents in our test data
+        assert len(results) == 4, f"Should find 4 documents in first half of 2024, got {len(results)}"
+        
+        for result in results:
+            pub_date = result.payload["publication_date"]
+            assert pub_date.startswith("2024"), f"All results should be from 2024, got {pub_date}"
+        
+        print(f"✅ DatetimeRange half-year filter test passed: Found {len(results)} documents in first half of 2024")
+
+    @pytest.mark.integration
+    def test_datetime_range_filter_with_other_filters(self):
+        """Test DatetimeRange combined with other filters (author + date range)."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Combine author filter with DatetimeRange
+        filters = {
+            "author": "John Smith",
+            "publication_date": {
+                "gte": "2023-01-01",
+                "lt": "2024-01-01"
+            }
+        }
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            filters=filters
+        )
+        
+        # Should match John Smith documents from 2023 (doc1, doc3)
+        assert len(results) == 2, f"Should find 2 documents by John Smith from 2023 date range, got {len(results)}"
+        
+        result_doc_names = {result.payload["doc_name"] for result in results}
+        expected_doc_names = {"doc1", "doc3"}
+        assert result_doc_names == expected_doc_names, f"Should return doc1, doc3, got {result_doc_names}"
+        
+        # Verify all results match both criteria
+        for result in results:
+            assert result.payload["author"] == "John Smith", f"All results should be by John Smith"
+            pub_date = result.payload["publication_date"]
+            assert pub_date.startswith("2023"), f"All results should be from 2023, got {pub_date}"
+        
+        print(f"✅ Combined DatetimeRange + author filter test passed: Found {len(results)} documents")
+
+    @pytest.mark.integration
+    def test_datetime_range_filter_gte_only(self):
+        """Test DatetimeRange with only gte (greater than or equal) condition."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Filter for documents from 2024 onwards (gte only)
+        filters = {
+            "publication_date": {
+                "gte": "2024-01-01"
+            }
+        }
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            filters=filters
+        )
+        
+        # Should match documents from 2024 and 2025 (doc2, doc4, doc5, doc6, doc7, doc8)
+        assert len(results) == 6, f"Should find 6 documents from 2024 onwards, got {len(results)}"
+        
+        result_doc_names = {result.payload["doc_name"] for result in results}
+        expected_doc_names = {"doc2", "doc4", "doc5", "doc6", "doc7", "doc8"}
+        assert result_doc_names == expected_doc_names, f"Should return docs from 2024+, got {result_doc_names}"
+        
+        # Verify all results are from 2024 or later
+        for result in results:
+            pub_date = result.payload["publication_date"]
+            assert pub_date.startswith("2024") or pub_date.startswith("2025"), f"All results should be from 2024 or 2025, got {pub_date}"
+        
+        print(f"✅ DatetimeRange gte-only filter test passed: Found {len(results)} documents from 2024 onwards")
+
+    @pytest.mark.integration
+    def test_datetime_range_filter_lt_only(self):
+        """Test DatetimeRange with only lt (less than) condition."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Filter for documents before 2024 (lt only)
+        filters = {
+            "publication_date": {
+                "lt": "2024-01-01"
+            }
+        }
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            filters=filters
+        )
+        
+        # Should match documents from 2023 (doc1, doc3)
+        assert len(results) == 2, f"Should find 2 documents before 2024, got {len(results)}"
+        
+        result_doc_names = {result.payload["doc_name"] for result in results}
+        expected_doc_names = {"doc1", "doc3"}
+        assert result_doc_names == expected_doc_names, f"Should return doc1, doc3, got {result_doc_names}"
+        
+        # Verify all results are from before 2024
+        for result in results:
+            pub_date = result.payload["publication_date"]
+            assert pub_date.startswith("2023"), f"All results should be from 2023, got {pub_date}"
+        
+        print(f"✅ DatetimeRange lt-only filter test passed: Found {len(results)} documents before 2024")
+
+    @pytest.mark.integration
+    def test_backward_compatibility_legacy_year_filter(self):
+        """Test that legacy string year filters still work (backward compatibility)."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Use legacy string format
+        filters = {"publication_date": "2024"}
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            filters=filters
+        )
+        
+        # Should work exactly like before and match DatetimeRange results
+        assert len(results) == 4, f"Legacy year filter should work, got {len(results)}"
+        
+        result_doc_names = {result.payload["doc_name"] for result in results}
+        expected_doc_names = {"doc2", "doc4", "doc5", "doc8"}
+        assert result_doc_names == expected_doc_names, f"Legacy filter should return same results"
+        
+        print(f"✅ Legacy year filter backward compatibility test passed: Found {len(results)} documents")
+
+    @pytest.mark.integration
+    def test_datetime_range_filter_no_matches(self):
+        """Test DatetimeRange filter that should return no matches."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Filter for a range with no matching documents (e.g., 2022)
+        filters = {
+            "publication_date": {
+                "gte": "2022-01-01",
+                "lt": "2023-01-01"
+            }
+        }
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            filters=filters
+        )
+        
+        # Should find no matches
+        assert len(results) == 0, f"Should find no documents for 2022 range, got {len(results)}"
+        
+        print("✅ DatetimeRange no matches test passed: Found 0 documents for 2022 (expected)")
