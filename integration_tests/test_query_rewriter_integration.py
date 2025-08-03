@@ -376,7 +376,7 @@ class TestQueryRewriterIntegration:
                 # If tags are present, print warning - this might indicate the LLM is still auto-extracting
                 print(f"WARNING: Unexpected tags found for topic query: {user_query}")
                 print(f"  Tags: {filters['tags']}")
-                print(f"  This may indicate the LLM is still auto-extracting tags from topics")
+                print("  This may indicate the LLM is still auto-extracting tags from topics")
             else:
                 print(f"✓ Correct: No auto-extracted tags for topic query: {user_query}")
     
@@ -1175,14 +1175,14 @@ class TestQueryRewriterIntegration:
             
             if isinstance(pub_date, dict):
                 # New DatetimeRange format (Phase 2 success!)
-                assert 'gte' in pub_date, f"DatetimeRange should have 'gte' field"
+                assert 'gte' in pub_date, "DatetimeRange should have 'gte' field"
                 assert pub_date['gte'] == test_case['expected_gte'], f"Expected gte='{test_case['expected_gte']}', got '{pub_date['gte']}'"
                 
                 if test_case['expected_lt'] is not None:
-                    assert 'lt' in pub_date, f"DatetimeRange should have 'lt' field"
+                    assert 'lt' in pub_date, "DatetimeRange should have 'lt' field"
                     assert pub_date['lt'] == test_case['expected_lt'], f"Expected lt='{test_case['expected_lt']}', got '{pub_date['lt']}'"
                 else:
-                    assert 'lt' not in pub_date, f"'Since' queries should not have 'lt' field"
+                    assert 'lt' not in pub_date, "'Since' queries should not have 'lt' field"
                 
                 print(f"✅ PASS: DatetimeRange format correct: {pub_date}")
                 phase2_successes += 1

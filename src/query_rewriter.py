@@ -52,7 +52,7 @@ You must respond with a JSON object containing exactly these fields:
 - "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
 - "embedding_source_text": string - Core topic keywords only, ignoring instruction words like "explain", "pros and cons" (only needed if search_rag=true)
 - "llm_query": string - Clear instruction for the LLM with appropriate context reference
-- "filters": object - Optional metadata filters extracted from the query (only when search_rag=true)
+- "hard_filters": object - Metadata filters extracted from the query (only when search_rag=true)
 
 Context source logic:
 1. **If "{self.trigger_phrase}" present**: Always search knowledge base
@@ -81,43 +81,43 @@ Context source logic:
 Examples:
 
 User: "What is machine learning?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications.", "filters": {{}}}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications.", "hard_filters": {{}}}}
 
 User: "{self.trigger_phrase} How does neural network training work?"
-Response: {{"search_rag": true, "embedding_source_text": "neural network training", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "filters": {{}}}}
+Response: {{"search_rag": true, "embedding_source_text": "neural network training", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "hard_filters": {{}}}}
 
 User: "{self.trigger_phrase} papers by John Smith about machine learning"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "filters": {{"author": "John Smith"}}}}
+Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "hard_filters": {{"author": "John Smith"}}}}
 
 User: "{self.trigger_phrase} articles from 2023 about Python programming"
-Response: {{"search_rag": true, "embedding_source_text": "Python programming", "llm_query": "Based on the provided context, provide information about Python programming from 2023 articles.", "filters": {{"publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}}}
+Response: {{"search_rag": true, "embedding_source_text": "Python programming", "llm_query": "Based on the provided context, provide information about Python programming from 2023 articles.", "hard_filters": {{"publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}}}
 
 User: "{self.trigger_phrase} search on vibe coding from John Wong published in March 2025, then explain what is vibe coding, and pros/cons"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding programming approach", "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources.", "filters": {{"author": "John Wong", "publication_date": {{"gte": "2025-03-01", "lt": "2025-04-01"}}}}}}
+Response: {{"search_rag": true, "embedding_source_text": "vibe coding programming approach", "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources.", "hard_filters": {{"author": "John Wong", "publication_date": {{"gte": "2025-03-01", "lt": "2025-04-01"}}}}}}
 
 User: "{self.trigger_phrase} papers by John Smith with tag machine learning"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
+Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "hard_filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
 
 User: "{self.trigger_phrase} articles with tags python, AI from 2023"
-Response: {{"search_rag": true, "embedding_source_text": "python AI artificial intelligence", "llm_query": "Based on the provided context, provide information about Python and AI from 2023 articles.", "filters": {{"tags": ["python", "ai"], "publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}}}
+Response: {{"search_rag": true, "embedding_source_text": "python AI artificial intelligence", "llm_query": "Based on the provided context, provide information about Python and AI from 2023 articles.", "hard_filters": {{"tags": ["python", "ai"], "publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}}}
 
 User: "{self.trigger_phrase} papers from 2025 Q1 about machine learning"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning from Q1 2025 papers.", "filters": {{"publication_date": {{"gte": "2025-01-01", "lt": "2025-04-01"}}}}}}
+Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning from Q1 2025 papers.", "hard_filters": {{"publication_date": {{"gte": "2025-01-01", "lt": "2025-04-01"}}}}}}
 
 User: "{self.trigger_phrase} articles by John Wong since 2024"
-Response: {{"search_rag": true, "embedding_source_text": "John Wong articles", "llm_query": "Based on the provided context, provide information from John Wong's articles published since 2024.", "filters": {{"author": "John Wong", "publication_date": {{"gte": "2024-01-01"}}}}}}
+Response: {{"search_rag": true, "embedding_source_text": "John Wong articles", "llm_query": "Based on the provided context, provide information from John Wong's articles published since 2024.", "hard_filters": {{"author": "John Wong", "publication_date": {{"gte": "2024-01-01"}}}}}}
 
 User: "{self.trigger_phrase} documents published in first half of 2024"
-Response: {{"search_rag": true, "embedding_source_text": "documents first half 2024", "llm_query": "Based on the provided context, provide information from documents published in the first half of 2024.", "filters": {{"publication_date": {{"gte": "2024-01-01", "lt": "2024-07-01"}}}}}}
+Response: {{"search_rag": true, "embedding_source_text": "documents first half 2024", "llm_query": "Based on the provided context, provide information from documents published in the first half of 2024.", "hard_filters": {{"publication_date": {{"gte": "2024-01-01", "lt": "2024-07-01"}}}}}}
 
 User: "Tell me more about the automation benefits"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "filters": {{}}}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "hard_filters": {{}}}}
 
 User: "Can you elaborate on that approach?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation.", "filters": {{}}}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation.", "hard_filters": {{}}}}
 
 User: "{self.trigger_phrase} what are the differences between REST and GraphQL APIs?"  
-Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL APIs", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases.", "filters": {{}}}}
+Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL APIs", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases.", "hard_filters": {{}}}}
 
 Always respond with valid JSON only. Do not include any other text or formatting."""
     
@@ -129,7 +129,7 @@ You must respond with a JSON object containing exactly these fields:
 - "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
 - "embedding_source_text": string - A focused 2-4 sentence hypothetical document that answers the core topic (only needed if search_rag=true)
 - "llm_query": string - Clear instruction for the LLM with appropriate context reference
-- "filters": object - Optional metadata filters extracted from the query (only when search_rag=true)
+- "hard_filters": object - Metadata filters extracted from the query (only when search_rag=true)
 
 Context source logic:
 1. **If "{self.trigger_phrase}" present**: Always search knowledge base
@@ -147,8 +147,6 @@ Context source logic:
        - Before dates: "before 2024", "until 2023" → {{"publication_date": {{"lt": "2024-01-01"}}}}
      * Explicit tags: "with tag python", "tagged as machine learning" → {{"tags": ["python"]}}
      * Multiple tags: "with tags python, AI" → {{"tags": ["python", "ai"]}}
-     * Combined: "Smith's papers with tag AI from 2023" → {{"author": "Smith", "tags": ["ai"], "publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}
-     * NO auto topic extraction: "about Python", "on machine learning" → No tag filter (broader search)
    
 2. **If no "{self.trigger_phrase}"**: Analyze if query references previous conversation
    - **Conversational references** (uses "that", "it", "the X part", "more about", "tell me more", "what you mentioned", etc.):
@@ -159,31 +157,31 @@ Context source logic:
 Examples:
 
 User: "What is machine learning?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications.", "filters": {{}}}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications.", "hard_filters": {{}}}}
 
 User: "{self.trigger_phrase} How does neural network training work?"
-Response: {{"search_rag": true, "embedding_source_text": "Neural network training is a process where the network learns from data through backpropagation and gradient descent. During training, the network adjusts its weights and biases by calculating the error between predicted and actual outputs, then propagating this error backward through the layers. The gradient descent algorithm optimizes these parameters iteratively to minimize the loss function, enabling the network to improve its predictions over time.", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "filters": {{}}}}
+Response: {{"search_rag": true, "embedding_source_text": "Neural network training is a process where the network learns from data through backpropagation and gradient descent. During training, the network adjusts its weights and biases by calculating the error between predicted and actual outputs, then propagating this error backward through the layers. The gradient descent algorithm optimizes these parameters iteratively to minimize the loss function, enabling the network to improve its predictions over time.", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "hard_filters": {{}}}}
 
 User: "{self.trigger_phrase} papers by John Smith about machine learning"
-Response: {{"search_rag": true, "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience. Common applications include image recognition, natural language processing, and predictive analytics across various industries.", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "filters": {{"author": "John Smith"}}}}
+Response: {{"search_rag": true, "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience. Common applications include image recognition, natural language processing, and predictive analytics across various industries.", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "hard_filters": {{"author": "John Smith"}}}}
 
 User: "{self.trigger_phrase} search on vibe coding from John Wong published in March 2025, then explain what is vibe coding, and pros/cons"
-Response: {{"search_rag": true, "embedding_source_text": "Vibe coding is a programming approach that emphasizes writing code based on intuition, flow state, and personal rhythm rather than strict methodologies. This coding style prioritizes developer comfort, creativity, and maintaining a natural coding rhythm. Practitioners focus on writing code that feels right and maintains consistent energy levels during development sessions.", "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources.", "filters": {{"author": "John Wong", "publication_date": {{"gte": "2025-03-01", "lt": "2025-04-01"}}}}}}
+Response: {{"search_rag": true, "embedding_source_text": "Vibe coding is a programming approach that emphasizes writing code based on intuition, flow state, and personal rhythm rather than strict methodologies. This coding style prioritizes developer comfort, creativity, and maintaining a natural coding rhythm. Practitioners focus on writing code that feels right and maintains consistent energy levels during development sessions.", "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources.", "hard_filters": {{"author": "John Wong", "publication_date": {{"gte": "2025-03-01", "lt": "2025-04-01"}}}}}}
 
 User: "{self.trigger_phrase} papers by John Smith with tag machine learning"  
-Response: {{"search_rag": true, "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience. Common applications include image recognition, natural language processing, and predictive analytics across various industries.", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
+Response: {{"search_rag": true, "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience. Common applications include image recognition, natural language processing, and predictive analytics across various industries.", "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.", "hard_filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
 
 User: "Tell me more about the automation benefits"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "filters": {{}}}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "hard_filters": {{}}}}
 
 User: "Can you elaborate on that approach?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation.", "filters": {{}}}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation.", "hard_filters": {{}}}}
 
 User: "What's the weather today?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "What's the weather today?", "filters": {{}}}}
+Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "What's the weather today?", "hard_filters": {{}}}}
 
 User: "{self.trigger_phrase} what are the differences between REST and GraphQL APIs?"  
-Response: {{"search_rag": true, "embedding_source_text": "REST and GraphQL are both API design approaches with distinct characteristics. REST uses multiple endpoints with fixed data structures and HTTP methods, making it simple and cacheable but potentially leading to over-fetching or under-fetching of data. GraphQL uses a single endpoint with flexible queries that allow clients to request exactly the data they need, providing better performance and developer experience but with increased complexity and learning curve.", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases.", "filters": {{}}}}
+Response: {{"search_rag": true, "embedding_source_text": "REST and GraphQL are both API design approaches with distinct characteristics. REST uses multiple endpoints with fixed data structures and HTTP methods, making it simple and cacheable but potentially leading to over-fetching or under-fetching of data. GraphQL uses a single endpoint with flexible queries that allow clients to request exactly the data they need, providing better performance and developer experience but with increased complexity and learning curve.", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases.", "hard_filters": {{}}}}
 
 Always respond with valid JSON only. Do not include any other text or formatting."""
 
@@ -243,9 +241,9 @@ Always respond with valid JSON only. Do not include any other text or formatting
                 logger.warning(f"Missing field '{field}' in transformation result")
                 return self._create_fallback_result(original_query)
         
-        # Ensure filters field exists (optional but should be present)
-        if 'filters' not in result:
-            result['filters'] = {}
+        # Ensure hard_filters field exists (Phase 3 feature)
+        if 'hard_filters' not in result:
+            result['hard_filters'] = {}
         
         # Validate search_rag is boolean
         if not isinstance(result['search_rag'], bool):
@@ -267,10 +265,10 @@ Always respond with valid JSON only. Do not include any other text or formatting
             logger.warning("llm_query field is empty or invalid")
             return self._create_fallback_result(original_query)
         
-        # Validate filters field is a dictionary
-        if not isinstance(result['filters'], dict):
-            logger.warning("filters field is not a dictionary, resetting to empty dict")
-            result['filters'] = {}
+        # Validate filter fields are dictionaries
+        if not isinstance(result['hard_filters'], dict):
+            logger.warning("hard_filters field is not a dictionary, resetting to empty dict")
+            result['hard_filters'] = {}
         
         # Double-check search_rag logic against actual trigger detection
         actual_has_trigger = self.trigger_phrase.lower() in original_query.lower()
@@ -303,7 +301,7 @@ Always respond with valid JSON only. Do not include any other text or formatting
             'search_rag': search_rag,
             'embedding_source_text': clean_query,
             'llm_query': user_query,
-            'filters': {}
+            'hard_filters': {}
         }
         
         logger.info("Using fallback query transformation")
@@ -333,7 +331,7 @@ Always respond with valid JSON only. Do not include any other text or formatting
             )
             
             # Validate the test result has required fields
-            expected_fields = ['search_rag', 'embedding_source_text', 'llm_query']
+            expected_fields = ['search_rag', 'embedding_source_text', 'llm_query', 'hard_filters']
             if all(field in parsed_result for field in expected_fields):
                 logger.info("QueryRewriter connection test successful")
                 return True

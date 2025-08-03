@@ -82,7 +82,7 @@ class TestQdrantIntegration:
     @classmethod
     def _create_payload_indexes(cls):
         """Create payload indexes for filterable fields."""
-        from qdrant_client.models import CreateFieldIndex, PayloadSchemaType
+        from qdrant_client.models import PayloadSchemaType
         
         try:
             # Create index for author field (keyword type for exact matches)
@@ -932,7 +932,7 @@ class TestQdrantIntegration:
         
         # Verify all results match both criteria
         for result in results:
-            assert result.payload["author"] == "John Smith", f"All results should be by John Smith"
+            assert result.payload["author"] == "John Smith", "All results should be by John Smith"
             pub_date = result.payload["publication_date"]
             assert pub_date.startswith("2023"), f"All results should be from 2023, got {pub_date}"
         
@@ -1018,7 +1018,7 @@ class TestQdrantIntegration:
         
         result_doc_names = {result.payload["doc_name"] for result in results}
         expected_doc_names = {"doc2", "doc4", "doc5", "doc8"}
-        assert result_doc_names == expected_doc_names, f"Legacy filter should return same results"
+        assert result_doc_names == expected_doc_names, "Legacy filter should return same results"
         
         print(f"✅ Legacy year filter backward compatibility test passed: Found {len(results)} documents")
 
@@ -1044,3 +1044,124 @@ class TestQdrantIntegration:
         assert len(results) == 0, f"Should find no documents for 2022 range, got {len(results)}"
         
         print("✅ DatetimeRange no matches test passed: Found 0 documents for 2022 (expected)")
+
+    # ========================================
+    # NEGATION FILTER TESTS
+    # ========================================
+
+    @pytest.mark.integration
+    def test_negation_filter_exclude_author(self):
+        """Test negation filter to exclude specific author."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Exclude "John Smith" (should match doc2, doc4, doc5, doc6, doc8)
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            negation_filters={"author": "John Smith"}
+        )
+        
+        # Should find 5 documents (all except John Smith's 3 docs)
+        assert len(results) == 5, f"Should find 5 documents NOT by John Smith, got {len(results)}"
+        
+        # Verify none of the results are by John Smith
+        for result in results:
+            assert result.payload["author"] != "John Smith", f"Found John Smith in negation results: {result.payload}"
+        
+        # Verify we get the expected documents
+        result_doc_names = {result.payload["doc_name"] for result in results}
+        expected_doc_names = {"doc2", "doc4", "doc5", "doc6", "doc8"}
+        assert result_doc_names == expected_doc_names, f"Expected {expected_doc_names}, got {result_doc_names}"
+        
+        print(f"✅ Author negation filter test passed: Found {len(results)} documents NOT by John Smith")
+
+    @pytest.mark.integration
+    def test_negation_filter_exclude_tags(self):
+        """Test negation filter to exclude documents with specific tags."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Exclude documents with "python" tag (should match doc3, doc5, doc6, doc8)
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            negation_filters={"tags": ["python"]}
+        )
+        
+        # Should find 4 documents (all without python tag)
+        assert len(results) == 4, f"Should find 4 documents without python tag, got {len(results)}"
+        
+        # Verify none of the results have python tag
+        for result in results:
+            assert "python" not in result.payload["tags"], f"Found python tag in negation results: {result.payload}"
+        
+        # Verify we get the expected documents
+        result_doc_names = {result.payload["doc_name"] for result in results}
+        expected_doc_names = {"doc3", "doc5", "doc6", "doc8"}
+        assert result_doc_names == expected_doc_names, f"Expected {expected_doc_names}, got {result_doc_names}"
+        
+        print(f"✅ Tag negation filter test passed: Found {len(results)} documents without python tag")
+
+    @pytest.mark.integration
+    def test_combined_positive_and_negation_filters(self):
+        """Test combining positive filters with negation filters."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Find documents from 2024 that are NOT by "Jane Doe"
+        # Should match doc4, doc5, doc8 (2024 docs excluding Jane Doe's doc2)
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            filters={"publication_date": "2024"},
+            negation_filters={"author": "Jane Doe"}
+        )
+        
+        # Should find 3 documents
+        assert len(results) == 3, f"Should find 3 documents from 2024 NOT by Jane Doe, got {len(results)}"
+        
+        # Verify all results are from 2024 and not by Jane Doe
+        for result in results:
+            pub_date = result.payload["publication_date"]
+            author = result.payload["author"]
+            assert pub_date.startswith("2024"), f"Should be from 2024, got {pub_date}"
+            assert author != "Jane Doe", f"Should not be by Jane Doe, got {author}"
+        
+        # Verify we get the expected documents
+        result_doc_names = {result.payload["doc_name"] for result in results}
+        expected_doc_names = {"doc4", "doc5", "doc8"}
+        assert result_doc_names == expected_doc_names, f"Expected {expected_doc_names}, got {result_doc_names}"
+        
+        print(f"✅ Combined positive+negation filter test passed: Found {len(results)} documents")
+
+    @pytest.mark.integration
+    def test_multiple_negation_filters(self):
+        """Test multiple negation conditions together."""
+        query_vector = self._generate_dummy_query_vector()
+        
+        # Test: Exclude both "John Smith" AND documents with "python" tag
+        # This should only match docs that are NOT by John Smith AND do NOT have python tag
+        # Expected: doc5 (Bob Wilson, no python), doc6 (Jane Doe, no python), doc8 (Dr. Sarah Chen, no python)
+        results = self.qdrant_db.search(
+            query_vector=query_vector,
+            limit=10,
+            negation_filters={
+                "author": "John Smith",
+                "tags": ["python"]
+            }
+        )
+        
+        # Should find 3 documents
+        assert len(results) == 3, f"Should find 3 documents excluding John Smith AND python, got {len(results)}"
+        
+        # Verify none of the results are by John Smith or have python tag
+        for result in results:
+            author = result.payload["author"]
+            tags = result.payload["tags"]
+            assert author != "John Smith", f"Should not be by John Smith, got {author}"
+            assert "python" not in tags, f"Should not have python tag, got {tags}"
+        
+        # Verify we get the expected documents
+        result_doc_names = {result.payload["doc_name"] for result in results}
+        expected_doc_names = {"doc5", "doc6", "doc8"}
+        assert result_doc_names == expected_doc_names, f"Expected {expected_doc_names}, got {result_doc_names}"
+        
+        print(f"✅ Multiple negation filters test passed: Found {len(results)} documents")

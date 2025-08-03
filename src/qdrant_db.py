@@ -91,9 +91,22 @@ class QdrantDB:
         query_vector: List[float], 
         limit: int = 5, 
         score_threshold: Optional[float] = None,
-        filters: Optional[Dict[str, Any]] = None
+        filters: Optional[Dict[str, Any]] = None,
+        negation_filters: Optional[Dict[str, Any]] = None
     ) -> List[ScoredPoint]:
-        """Search for similar vectors in the collection with optional metadata filtering."""
+        """
+        Search for similar vectors in the collection with optional metadata filtering.
+        
+        Args:
+            query_vector: The vector to search for
+            limit: Maximum number of results to return
+            score_threshold: Minimum similarity score threshold
+            filters: Dictionary of positive filters (must match)
+            negation_filters: Dictionary of negation filters (must NOT match)
+        
+        Returns:
+            List of ScoredPoint objects matching the criteria
+        """
         try:
             if not self.collection_exists():
                 logger.warning(f"Collection '{self.collection_name}' does not exist")
@@ -108,12 +121,19 @@ class QdrantDB:
             if score_threshold is not None:
                 search_params["score_threshold"] = score_threshold
             
-            # Add filters if provided
-            if filters:
-                qdrant_filter = self._build_qdrant_filter(filters)
+            # Build combined filter with both positive and negative conditions
+            if filters or negation_filters:
+                qdrant_filter = self._build_combined_filter(filters, negation_filters)
                 if qdrant_filter:
                     search_params["query_filter"] = qdrant_filter
-                    logger.info(f"Applied hybrid search filters: {list(filters.keys())}")
+                    
+                    # Log applied filters
+                    applied_filters = []
+                    if filters:
+                        applied_filters.extend([f"+{k}" for k in filters.keys()])
+                    if negation_filters:
+                        applied_filters.extend([f"-{k}" for k in negation_filters.keys()])
+                    logger.info(f"Applied hybrid search filters: {applied_filters}")
             
             results = self.client.search(**search_params)
             
@@ -195,20 +215,57 @@ class QdrantDB:
         except Exception as e:
             logger.warning(f"Could not validate payload indexes: {e}. Hybrid search may have degraded performance.")
     
-    def _build_qdrant_filter(self, filters: Dict[str, Any]) -> Optional[Filter]:
+    def _build_combined_filter(self, filters: Optional[Dict[str, Any]], negation_filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
         """
-        Build Qdrant Filter object from filters dictionary.
+        Build a combined Qdrant Filter object with both positive and negative conditions.
         
         Args:
-            filters: Dictionary containing filter conditions
-                    e.g., {"author": "Smith", "tags": ["python"], "publication_date": "2023"}
+            filters: Dictionary containing positive filter conditions (must match)
+            negation_filters: Dictionary containing negative filter conditions (must NOT match)
         
         Returns:
             Qdrant Filter object or None if no valid filters
         """
-        if not filters:
-            return None
+        must_conditions = []
+        must_not_conditions = []
         
+        try:
+            # Build positive conditions (must match)
+            if filters:
+                positive_conditions = self._build_filter_conditions(filters)
+                must_conditions.extend(positive_conditions)
+            
+            # Build negative conditions (must NOT match)
+            if negation_filters:
+                negative_conditions = self._build_filter_conditions(negation_filters)
+                must_not_conditions.extend(negative_conditions)
+            
+            # Create Filter object with both must and must_not conditions
+            if must_conditions or must_not_conditions:
+                filter_params = {}
+                if must_conditions:
+                    filter_params['must'] = must_conditions
+                if must_not_conditions:
+                    filter_params['must_not'] = must_not_conditions
+                
+                return Filter(**filter_params)
+            else:
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error building combined filter: {e}")
+            return None
+
+    def _build_filter_conditions(self, filters: Dict[str, Any]) -> List[FieldCondition]:
+        """
+        Build a list of FieldCondition objects from a filters dictionary.
+        
+        Args:
+            filters: Dictionary containing filter conditions
+        
+        Returns:
+            List of FieldCondition objects
+        """
         conditions = []
         
         try:
@@ -283,11 +340,29 @@ class QdrantDB:
                     )
                 )
             
-            if conditions:
-                return Filter(must=conditions)
-            else:
-                return None
+            return conditions
                 
         except Exception as e:
-            logger.error(f"Error building Qdrant filter: {e}")
+            logger.error(f"Error building filter conditions: {e}")
+            return []
+
+    def _build_qdrant_filter(self, filters: Dict[str, Any]) -> Optional[Filter]:
+        """
+        Build Qdrant Filter object from filters dictionary.
+        
+        Args:
+            filters: Dictionary containing filter conditions
+                    e.g., {"author": "Smith", "tags": ["python"], "publication_date": "2023"}
+        
+        Returns:
+            Qdrant Filter object or None if no valid filters
+        """
+        if not filters:
+            return None
+        
+        conditions = self._build_filter_conditions(filters)
+        
+        if conditions:
+            return Filter(must=conditions)
+        else:
             return None

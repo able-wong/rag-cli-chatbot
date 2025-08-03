@@ -296,7 +296,8 @@ def test_connection_test_success():
     mock_response = {
         "search_rag": True,
         "embedding_source_text": "artificial intelligence",
-        "llm_query": "What is artificial intelligence?"
+        "llm_query": "What is artificial intelligence?",
+        "hard_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
@@ -649,7 +650,8 @@ def test_hyde_strategy_connection_test():
     mock_response = {
         "search_rag": True,
         "embedding_source_text": "Artificial intelligence is the simulation of human intelligence in machines that are programmed to think and learn like humans. It encompasses various subfields including machine learning, natural language processing, and computer vision.",
-        "llm_query": "What is artificial intelligence based on the provided context?"
+        "llm_query": "What is artificial intelligence based on the provided context?",
+        "hard_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
@@ -661,12 +663,12 @@ def test_hyde_strategy_connection_test():
 # ============================================================================
 
 def test_filters_field_initialization():
-    """Test that filters field is properly initialized in responses."""
+    """Test that hard_hard_filters field is properly initialized in responses."""
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
     
-    # Mock response without filters field
+    # Mock response without hard_hard_filters field
     mock_response = {
         "search_rag": True,
         "embedding_source_text": "Python programming",
@@ -676,9 +678,9 @@ def test_filters_field_initialization():
     
     result = rewriter.transform_query("@knowledgebase What is Python?")
     
-    # Should add empty filters field
-    assert 'filters' in result
-    assert result['filters'] == {}
+    # Should add empty hard_hard_filters field
+    assert 'hard_filters' in result
+    assert result['hard_filters'] == {}
 
 def test_author_filter_extraction():
     """Test extraction of author filters from natural language."""
@@ -699,15 +701,15 @@ def test_author_filter_extraction():
             "search_rag": True,
             "embedding_source_text": "research topic",
             "llm_query": "Based on the provided context, provide information about the research.",
-            "filters": expected_filters
+            "hard_filters": expected_filters
         }
         mock_llm.get_json_response.return_value = mock_response
         
         result = rewriter.transform_query(query)
         
         assert result['search_rag'] is True
-        assert result['filters'] == expected_filters
-        assert result['filters']['author'] == expected_filters['author']
+        assert result['hard_filters'] == expected_filters
+        assert result['hard_filters']['author'] == expected_filters['author']
 
 def test_publication_date_filter_extraction():
     """Test extraction of publication date filters from natural language."""
@@ -728,15 +730,15 @@ def test_publication_date_filter_extraction():
             "search_rag": True,
             "embedding_source_text": "research topic",
             "llm_query": "Based on the provided context, provide information about the research.",
-            "filters": expected_filters
+            "hard_filters": expected_filters
         }
         mock_llm.get_json_response.return_value = mock_response
         
         result = rewriter.transform_query(query)
         
         assert result['search_rag'] is True
-        assert result['filters'] == expected_filters
-        assert result['filters']['publication_date'] == expected_filters['publication_date']
+        assert result['hard_filters'] == expected_filters
+        assert result['hard_filters']['publication_date'] == expected_filters['publication_date']
 
 def test_explicit_tag_syntax_single_tag():
     """Test explicit tag syntax with single tag."""
@@ -756,15 +758,15 @@ def test_explicit_tag_syntax_single_tag():
             "search_rag": True,
             "embedding_source_text": "research topic",
             "llm_query": "Based on the provided context, provide information about the research.",
-            "filters": expected_filters
+            "hard_filters": expected_filters
         }
         mock_llm.get_json_response.return_value = mock_response
         
         result = rewriter.transform_query(query)
         
         assert result['search_rag'] is True
-        assert result['filters'] == expected_filters
-        assert result['filters']['tags'] == expected_filters['tags']
+        assert result['hard_filters'] == expected_filters
+        assert result['hard_filters']['tags'] == expected_filters['tags']
 
 def test_explicit_tag_syntax_multiple_tags():
     """Test explicit tag syntax with multiple tags."""
@@ -783,15 +785,15 @@ def test_explicit_tag_syntax_multiple_tags():
             "search_rag": True,
             "embedding_source_text": "research topic",
             "llm_query": "Based on the provided context, provide information about the research.",
-            "filters": expected_filters
+            "hard_filters": expected_filters
         }
         mock_llm.get_json_response.return_value = mock_response
         
         result = rewriter.transform_query(query)
         
         assert result['search_rag'] is True
-        assert result['filters'] == expected_filters
-        assert result['filters']['tags'] == expected_filters['tags']
+        assert result['hard_filters'] == expected_filters
+        assert result['hard_filters']['tags'] == expected_filters['tags']
 
 def test_no_auto_tag_extraction():
     """Test that topics don't auto-extract as tags (broader search)."""
@@ -813,16 +815,16 @@ def test_no_auto_tag_extraction():
             "search_rag": True,
             "embedding_source_text": "research topic",
             "llm_query": "Based on the provided context, provide information about the research.",
-            "filters": expected_filters
+            "hard_filters": expected_filters
         }
         mock_llm.get_json_response.return_value = mock_response
         
         result = rewriter.transform_query(query)
         
         assert result['search_rag'] is True
-        assert result['filters'] == expected_filters
+        assert result['hard_filters'] == expected_filters
         # Verify no tags were extracted
-        assert 'tags' not in result['filters']
+        assert 'tags' not in result['hard_filters']
 
 def test_mixed_explicit_and_auto_filters():
     """Test explicit tags with auto author/date extraction."""
@@ -845,14 +847,14 @@ def test_mixed_explicit_and_auto_filters():
             "search_rag": True,
             "embedding_source_text": "research topic",
             "llm_query": "Based on the provided context, provide information about the research.",
-            "filters": expected_filters
+            "hard_filters": expected_filters
         }
         mock_llm.get_json_response.return_value = mock_response
         
         result = rewriter.transform_query(query)
         
         assert result['search_rag'] is True
-        assert result['filters'] == expected_filters
+        assert result['hard_filters'] == expected_filters
 
 def test_combined_filters_extraction():
     """Test extraction of multiple filters from single query."""
@@ -872,17 +874,17 @@ def test_combined_filters_extraction():
         "search_rag": True,
         "embedding_source_text": "artificial intelligence research",
         "llm_query": "Based on the provided context, provide information about Smith's AI research from 2023.",
-        "filters": expected_filters
+        "hard_filters": expected_filters
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query(query)
     
     assert result['search_rag'] is True
-    assert result['filters'] == expected_filters
-    assert result['filters']['author'] == "Smith"
-    assert result['filters']['tags'] == ["ai"]
-    assert result['filters']['publication_date'] == "2023"
+    assert result['hard_filters'] == expected_filters
+    assert result['hard_filters']['author'] == "Smith"
+    assert result['hard_filters']['tags'] == ["ai"]
+    assert result['hard_filters']['publication_date'] == "2023"
 
 def test_complex_natural_language_query():
     """Test the complex example from the user: vibe coding from John Wong published in March 2025."""
@@ -901,20 +903,20 @@ def test_complex_natural_language_query():
         "search_rag": True,
         "embedding_source_text": "vibe coding programming approach",
         "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources.",
-        "filters": expected_filters
+        "hard_filters": expected_filters
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query(query)
     
     assert result['search_rag'] is True
-    assert result['filters'] == expected_filters
-    assert result['filters']['author'] == "John Wong"
-    assert result['filters']['tags'] == ["vibe coding"]
-    assert result['filters']['publication_date'] == "2025-03"
+    assert result['hard_filters'] == expected_filters
+    assert result['hard_filters']['author'] == "John Wong"
+    assert result['hard_filters']['tags'] == ["vibe coding"]
+    assert result['hard_filters']['publication_date'] == "2025-03"
 
 def test_filters_field_validation():
-    """Test validation of filters field structure."""
+    """Test validation of hard_filters field structure."""
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
@@ -924,14 +926,14 @@ def test_filters_field_validation():
         "search_rag": True,
         "embedding_source_text": "test content",
         "llm_query": "test query",
-        "filters": "invalid_string"  # Should be dict
+        "hard_filters": "invalid_string"  # Should be dict
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query("@knowledgebase test query")
     
     # Should reset to empty dict
-    assert result['filters'] == {}
+    assert result['hard_filters'] == {}
 
 def test_filters_with_hyde_strategy():
     """Test that filters work correctly with HyDE strategy."""
@@ -952,14 +954,14 @@ def test_filters_with_hyde_strategy():
         "search_rag": True,
         "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience.",
         "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.",
-        "filters": expected_filters
+        "hard_filters": expected_filters
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query(query)
     
     assert result['search_rag'] is True
-    assert result['filters'] == expected_filters
+    assert result['hard_filters'] == expected_filters
     assert len(result['embedding_source_text']) > 100  # HyDE should generate longer text
 
 def test_no_filters_for_non_rag_queries():
@@ -972,17 +974,17 @@ def test_no_filters_for_non_rag_queries():
         "search_rag": False,
         "embedding_source_text": "",
         "llm_query": "What is the weather today?",
-        "filters": {}
+        "hard_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query("What is the weather today?")
     
     assert result['search_rag'] is False
-    assert result['filters'] == {}
+    assert result['hard_filters'] == {}
 
 def test_filters_fallback_behavior():
-    """Test that fallback logic includes empty filters field."""
+    """Test that fallback logic includes empty hard_filters field."""
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
@@ -996,8 +998,8 @@ def test_filters_fallback_behavior():
     assert result['search_rag'] is True
     assert result['embedding_source_text'] == "What is Python?"
     assert result['llm_query'] == "@knowledgebase What is Python?"
-    assert 'filters' in result
-    assert result['filters'] == {}
+    assert 'hard_filters' in result
+    assert result['hard_filters'] == {}
 
 def test_empty_filters_handling():
     """Test handling of empty or null filters in response."""
@@ -1010,14 +1012,14 @@ def test_empty_filters_handling():
         "search_rag": True,
         "embedding_source_text": "test content",
         "llm_query": "test query",
-        "filters": None
+        "hard_filters": None
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query("@knowledgebase test query")
     
     # Should convert None to empty dict
-    assert result['filters'] == {}
+    assert result['hard_filters'] == {}
 
 def test_partial_filters_extraction():
     """Test queries that only extract some types of filters."""
@@ -1033,16 +1035,16 @@ def test_partial_filters_extraction():
         "search_rag": True,
         "embedding_source_text": "latest research papers",
         "llm_query": "Based on the provided context, provide information about Dr. Johnson's latest papers.",
-        "filters": expected_filters
+        "hard_filters": expected_filters
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query(query)
     
     assert result['search_rag'] is True
-    assert result['filters'] == expected_filters
-    assert 'tags' not in result['filters']
-    assert 'publication_date' not in result['filters']
+    assert result['hard_filters'] == expected_filters
+    assert 'tags' not in result['hard_filters']
+    assert 'publication_date' not in result['hard_filters']
 
 def test_filters_with_conversational_queries():
     """Test that conversational queries don't extract filters."""
@@ -1054,18 +1056,18 @@ def test_filters_with_conversational_queries():
         "search_rag": False,
         "embedding_source_text": "",
         "llm_query": "Tell me more about those techniques based on context in previous conversation.",
-        "filters": {}
+        "hard_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query("Tell me more about those techniques")
     
     assert result['search_rag'] is False
-    assert result['filters'] == {}
+    assert result['hard_filters'] == {}
     assert "based on context in previous conversation" in result['llm_query']
 
 def test_filters_in_connection_test():
-    """Test that connection test handles filters field correctly."""
+    """Test that connection test handles hard_filters field correctly."""
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
@@ -1075,14 +1077,14 @@ def test_filters_in_connection_test():
         "search_rag": True,
         "embedding_source_text": "artificial intelligence",
         "llm_query": "What is artificial intelligence?",
-        "filters": {"tags": ["ai"]}
+        "hard_filters": {"tags": ["ai"]}
     }
     mock_llm.get_json_response.return_value = mock_response
     
     success = rewriter.test_connection()
     assert success is True
     
-    # Test that connection test works even without filters field
+    # Test that connection test works even without hard_filters field
     mock_response_no_filters = {
         "search_rag": True,
         "embedding_source_text": "artificial intelligence",
