@@ -346,23 +346,3 @@ class QdrantDB:
             logger.error(f"Error building filter conditions: {e}")
             return []
 
-    def _build_qdrant_filter(self, filters: Dict[str, Any]) -> Optional[Filter]:
-        """
-        Build Qdrant Filter object from filters dictionary.
-        
-        Args:
-            filters: Dictionary containing filter conditions
-                    e.g., {"author": "Smith", "tags": ["python"], "publication_date": "2023"}
-        
-        Returns:
-            Qdrant Filter object or None if no valid filters
-        """
-        if not filters:
-            return None
-        
-        conditions = self._build_filter_conditions(filters)
-        
-        if conditions:
-            return Filter(must=conditions)
-        else:
-            return None

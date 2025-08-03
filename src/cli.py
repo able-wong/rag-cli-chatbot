@@ -141,44 +141,6 @@ class RAGCLI:
         
         return base_help
 
-    def _format_filter_display(self, filters: Dict[str, Any]) -> str:
-        """Format filters for display in search message."""
-        if not filters:
-            return ""
-        
-        filter_parts = []
-        for key, value in filters.items():
-            if not value:  # Skip empty values
-                continue
-                
-            if key == "author":
-                filter_parts.append(f"author: {value}")
-            elif key == "tags":
-                if isinstance(value, list):
-                    tags_str = ", ".join(str(tag) for tag in value)
-                    filter_parts.append(f"tags: [{tags_str}]")
-                else:
-                    filter_parts.append(f"tags: {value}")
-            elif key == "publication_date":
-                if isinstance(value, dict):
-                    # Handle date range objects
-                    if "gte" in value and "lt" in value:
-                        start_date = value["gte"][:7] if len(value["gte"]) > 7 else value["gte"]  # YYYY-MM or YYYY
-                        end_date = value["lt"][:7] if len(value["lt"]) > 7 else value["lt"]
-                        filter_parts.append(f"date: {start_date} to {end_date}")
-                    elif "gte" in value:
-                        start_date = value["gte"][:7] if len(value["gte"]) > 7 else value["gte"]
-                        filter_parts.append(f"date: from {start_date}")
-                    elif "lt" in value:
-                        end_date = value["lt"][:7] if len(value["lt"]) > 7 else value["lt"]
-                        filter_parts.append(f"date: before {end_date}")
-                else:
-                    filter_parts.append(f"date: {value}")
-            else:
-                # Generic handling for other filter types
-                filter_parts.append(f"{key}: {value}")
-        
-        return ", ".join(filter_parts)
 
     def _format_three_filter_display(self, query_analysis: Dict[str, Any]) -> str:
         """Format three-filter display with clear type indicators."""
