@@ -48,7 +48,13 @@ class QueryRewriter:
         """Build the shared instructions used by both strategies."""
         return f"""Context source logic:
 1. **If "{self.trigger_phrase}" present**: Always search knowledge base
-   - Extract metadata filters from natural language with STRICT classification:
+
+   **CRITICAL RULE - Intent-Based Pattern Detection**:
+   - Pattern 1 (Pure Search): Search keywords only → Extract metadata filters + SEARCH_SUMMARY_MODE
+   - Pattern 2 (Search+Action): Search AND action keywords → Extract metadata filters + perform action
+   - Pattern 3 (Pure Action): Action keywords only → NO metadata extraction, all filters empty
+   
+   - Extract metadata filters from natural language with STRICT classification (ONLY for Patterns 1&2):
 
    **HARD FILTERS** - Only for explicit restrictive keywords (excludes if not matching):
    - Keywords: "only", "exclusively", "strictly", "limited to", "solely", "must be"
@@ -71,11 +77,33 @@ class QueryRewriter:
 
    **Key principle**: Everything goes to soft_filters unless explicitly restrictive or negated.
    
-   **Search-Only Query Detection**: Detect queries that only specify search criteria without asking questions:
-   - **Search-only patterns**: "search", "find", "show me", "get", "retrieve" + filters but NO question words
-   - **Question indicators**: "what", "how", "why", "when", "where", "explain", "compare", "summarize", "pros and cons"
-   - **If search-only detected**: Use "SEARCH_SUMMARY_MODE" as llm_query (exactly this string)
-   - **If has questions**: Use "based on the provided context" + question in llm_query
+   **Intent-Based Pattern Detection**: Classify queries by detecting intent, not word order:
+   
+   **Search Intent Keywords**: search, find, locate, get, show, retrieve, fetch, list, lookup, discover
+   **Action Intent Keywords**: what, how, why, explain, compare, analyze, summarize, describe, tell, pros, cons, benefits, drawbacks
+   
+   **Pattern 1 - Pure Search Intent**: Contains search keywords, no action keywords
+   - "search @knowledgebase on [topic]" → SEARCH_SUMMARY_MODE + extract metadata filters
+   - "@knowledgebase find papers by Smith" → SEARCH_SUMMARY_MODE + extract metadata filters  
+   - "get @knowledgebase documents from 2024" → SEARCH_SUMMARY_MODE + extract metadata filters
+   - Key: Search intent detected, no analysis/question intent
+   - Result: Document summaries + question suggestions
+   
+   **Pattern 2 - Search + Action Intent**: Contains BOTH search AND action keywords
+   - "search @knowledgebase on AI, explain the concepts" → Two-stage processing + extract metadata filters
+   - "@knowledgebase find papers by Smith and summarize" → Two-stage processing + extract metadata filters
+   - "get @knowledgebase docs on Python, what are key features" → Two-stage processing + extract metadata filters
+   - Key: Both search and action intents detected in same query
+   - Natural connectors: commas, "and", "then", or contextual flow
+   - Result: Search for documents, then perform action on retrieved results
+   
+   **Pattern 3 - Pure Action Intent**: Contains action keywords, no search keywords  
+   - "@knowledgebase what is AI" → Regular RAG question + NO metadata filter extraction
+   - "@knowledgebase explain Python programming" → Regular RAG question + NO metadata filter extraction
+   - "@knowledgebase compare REST vs GraphQL" → Regular RAG question + NO metadata filter extraction
+   - Key: Only action/question intent detected, no search intent
+   - **IMPORTANT**: Pattern 3 treats ALL metadata references as semantic context, not as filters to extract
+   - Result: Standard context-based response with empty filter objects
    
    **LLM Query Guidelines**: 
    - For search-only: llm_query = "SEARCH_SUMMARY_MODE"
@@ -100,14 +128,23 @@ Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Prov
 User: "Can you elaborate on that approach?"
 Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} search papers by John Wong about vibe coding"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "John Wong", "tags": ["vibe coding"]}}}}
+User: "search {self.trigger_phrase} on vibe coding only from John Wong"
+Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"author": "John Wong"}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} find documents only from 2025, without tag gemini"
-Response: {{"search_rag": true, "embedding_source_text": "documents 2025", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"publication_date": {{"gte": "2025-01-01", "lt": "2026-01-01"}}}}, "negation_filters": {{"tags": ["gemini"]}}, "soft_filters": {{}}}}
+User: "{self.trigger_phrase} find papers about Python, without tag gemini"
+Response: {{"search_rag": true, "embedding_source_text": "Python", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{"tags": ["gemini"]}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} show me research by Dr. Smith on AI"
-Response: {{"search_rag": true, "embedding_source_text": "AI research", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Dr. Smith", "tags": ["ai"]}}}}
+User: "search {self.trigger_phrase} on AI research by Dr. Smith, explain the methodology"
+Response: {{"search_rag": true, "embedding_source_text": "AI research", "llm_query": "Based on the provided context, explain the methodology.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Dr. Smith", "tags": ["ai research"]}}}}
+
+User: "{self.trigger_phrase} get documents on machine learning and summarize"
+Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, summarize the information about machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+
+User: "{self.trigger_phrase} what is Python programming"  
+Response: {{"search_rag": true, "embedding_source_text": "Python programming", "llm_query": "Based on the provided context, explain what Python programming is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+
+User: "{self.trigger_phrase} compare REST vs GraphQL APIs"
+Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL APIs", "llm_query": "Based on the provided context, compare REST vs GraphQL APIs.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 Always respond with valid JSON only. Do not include any other text or formatting."""
 
@@ -115,13 +152,22 @@ Always respond with valid JSON only. Do not include any other text or formatting
         """Build the system prompt for the default rewrite strategy."""
         return f"""You are a query transformation assistant. Your job is to analyze user queries and determine the appropriate context source for responses.
 
+**INTENT-BASED PATTERN DETECTION**:
+- Search Intent Keywords: search, find, locate, get, show, retrieve, fetch, list, lookup, discover
+- Action Intent Keywords: what, how, why, explain, compare, analyze, summarize, describe, tell, pros, cons, benefits, drawbacks
+
+Pattern Rules:
+- Pattern 1 (Pure Search): Search keywords only → Extract metadata filters + SEARCH_SUMMARY_MODE
+- Pattern 2 (Search+Action): BOTH search AND action keywords → Extract metadata filters + perform action  
+- Pattern 3 (Pure Action): Action keywords only → EMPTY filters (hard_filters: {{}}, negation_filters: {{}}, soft_filters: {{}})
+
 You must respond with a JSON object containing exactly these fields:
 - "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
 - "embedding_source_text": string - Core topic keywords only, ignoring instruction words like "explain", "pros and cons" (only needed if search_rag=true)
 - "llm_query": string - Clear instruction for the LLM with appropriate context reference
-- "hard_filters": object - Must-match metadata filters (excludes documents if not matching)
-- "negation_filters": object - Must-NOT-match metadata filters (excludes documents if matching)
-- "soft_filters": object - Boost-if-match metadata filters (boost score but don't exclude)
+- "hard_filters": object - Must-match metadata filters (excludes documents if not matching) - EMPTY for Pattern 3
+- "negation_filters": object - Must-NOT-match metadata filters (excludes documents if matching) - EMPTY for Pattern 3
+- "soft_filters": object - Boost-if-match metadata filters (boost score but don't exclude) - EMPTY for Pattern 3
 
 {self._build_shared_instructions()}
 
@@ -130,26 +176,26 @@ Examples:
 User: "{self.trigger_phrase} How does neural network training work?"
 Response: {{"search_rag": true, "embedding_source_text": "neural network training", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} papers by John Smith about machine learning"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
+User: "{self.trigger_phrase} find papers by John Smith about machine learning"
+Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
 
-User: "{self.trigger_phrase} articles ONLY from 2023 about Python programming"
-Response: {{"search_rag": true, "embedding_source_text": "Python programming", "llm_query": "Based on the provided context, provide information about Python programming.", "hard_filters": {{"publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}, "negation_filters": {{}}, "soft_filters": {{"tags": ["python", "programming"]}}}}
+User: "search {self.trigger_phrase} articles ONLY from 2023 about Python programming"
+Response: {{"search_rag": true, "embedding_source_text": "Python programming", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}, "negation_filters": {{}}, "soft_filters": {{"tags": ["python", "programming"]}}}}
 
-User: "{self.trigger_phrase} papers published only in 2025 on vibe coding, not from John Wong, with tags gemini"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding programming approach", "llm_query": "Based on the provided context, explain what vibe coding is.", "hard_filters": {{"publication_date": {{"gte": "2025-01-01", "lt": "2026-01-01"}}}}, "negation_filters": {{"author": "John Wong"}}, "soft_filters": {{"tags": ["gemini"]}}}}
+User: "{self.trigger_phrase} get papers on vibe coding, then explain what it is"
+Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "Based on the provided context, explain what vibe coding is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} research EXCLUSIVELY by Dr. Johnson, excluding robotics work"
-Response: {{"search_rag": true, "embedding_source_text": "Dr Johnson research", "llm_query": "Based on the provided context, provide information about Dr. Johnson's research.", "hard_filters": {{"author": "Dr. Johnson"}}, "negation_filters": {{"tags": ["robotics"]}}, "soft_filters": {{}}}}
+User: "{self.trigger_phrase} what are the benefits of Dr. Johnson's research approach"
+Response: {{"search_rag": true, "embedding_source_text": "Dr. Johnson's research approach benefits", "llm_query": "Based on the provided context, explain the benefits of Dr. Johnson's research approach.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} articles by Smith from 2024 about AI"
-Response: {{"search_rag": true, "embedding_source_text": "AI artificial intelligence", "llm_query": "Based on the provided context, provide information about AI.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Smith", "publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}, "tags": ["ai", "artificial intelligence"]}}}}
+User: "{self.trigger_phrase} explain the differences between REST and GraphQL"
+Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL differences", "llm_query": "Based on the provided context, explain the differences between REST and GraphQL.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} papers with tags python, AI, not by Johnson"
-Response: {{"search_rag": true, "embedding_source_text": "python AI artificial intelligence", "llm_query": "Based on the provided context, provide information about Python and AI.", "hard_filters": {{}}, "negation_filters": {{"author": "Johnson"}}, "soft_filters": {{"tags": ["python", "ai"]}}}}
+User: "locate {self.trigger_phrase} papers with tags python, AI, not by Johnson"
+Response: {{"search_rag": true, "embedding_source_text": "python AI", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{"author": "Johnson"}}, "soft_filters": {{"tags": ["python", "ai"]}}}}
 
-User: "{self.trigger_phrase} documents STRICTLY tagged machine learning from March 2025"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning.", "hard_filters": {{"tags": ["machine learning"], "publication_date": {{"gte": "2025-03-01", "lt": "2025-04-01"}}}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+User: "{self.trigger_phrase} retrieve documents on machine learning and compare approaches"
+Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, compare machine learning approaches.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 User: "{self.trigger_phrase} what are the differences between REST and GraphQL APIs?"  
 Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL APIs", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
@@ -160,11 +206,17 @@ Response: {{"search_rag": true, "embedding_source_text": "neural networks", "llm
 User: "{self.trigger_phrase} papers only from John Wong, without tag gemini, then summarize pros and cons of vibe coding"
 Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "Based on the provided context, summarize the pros and cons of vibe coding.", "hard_filters": {{"author": "John Wong"}}, "negation_filters": {{"tags": ["gemini"]}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} get papers by Smith from 2024"
-Response: {{"search_rag": true, "embedding_source_text": "papers Smith 2024", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Smith", "publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}}}
+User: "search {self.trigger_phrase} on vibe coding only from John Wong, without tag gemini"
+Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"author": "John Wong"}}, "negation_filters": {{"tags": ["gemini"]}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} retrieve documents tagged python, not by Johnson"
-Response: {{"search_rag": true, "embedding_source_text": "python documents", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{"author": "Johnson"}}, "soft_filters": {{"tags": ["python"]}}}}
+User: "find {self.trigger_phrase} about Python from 2024, then compare with Java"
+Response: {{"search_rag": true, "embedding_source_text": "Python", "llm_query": "Based on the provided context, compare Python with Java.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}}}
+
+User: "{self.trigger_phrase} search on machine learning from Dr. Smith"
+Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Dr. Smith"}}}}
+
+User: "{self.trigger_phrase} find documents about AI"
+Response: {{"search_rag": true, "embedding_source_text": "AI", "llm_query": "Based on the provided context, provide information about AI.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 {self._build_shared_examples()}"""
     
@@ -172,13 +224,22 @@ Response: {{"search_rag": true, "embedding_source_text": "python documents", "ll
         """Build the system prompt for HyDE (Hypothetical Document Embeddings) strategy."""
         return f"""You are a query transformation assistant using the HyDE (Hypothetical Document Embeddings) strategy. Your job is to analyze user queries and generate hypothetical documents that would answer their questions.
 
+**INTENT-BASED PATTERN DETECTION**:
+- Search Intent Keywords: search, find, locate, get, show, retrieve, fetch, list, lookup, discover
+- Action Intent Keywords: what, how, why, explain, compare, analyze, summarize, describe, tell, pros, cons, benefits, drawbacks
+
+Pattern Rules:
+- Pattern 1 (Pure Search): Search keywords only → Extract metadata filters + SEARCH_SUMMARY_MODE
+- Pattern 2 (Search+Action): BOTH search AND action keywords → Extract metadata filters + perform action  
+- Pattern 3 (Pure Action): Action keywords only → EMPTY filters (hard_filters: {{}}, negation_filters: {{}}, soft_filters: {{}})
+
 You must respond with a JSON object containing exactly these fields:
 - "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
 - "embedding_source_text": string - A focused 2-4 sentence hypothetical document that answers the core topic (only needed if search_rag=true)
 - "llm_query": string - Clear instruction for the LLM with appropriate context reference
-- "hard_filters": object - Must-match metadata filters (excludes documents if not matching)
-- "negation_filters": object - Must-NOT-match metadata filters (excludes documents if matching)
-- "soft_filters": object - Boost-if-match metadata filters (boost score but don't exclude)
+- "hard_filters": object - Must-match metadata filters (excludes documents if not matching) - EMPTY for Pattern 3
+- "negation_filters": object - Must-NOT-match metadata filters (excludes documents if matching) - EMPTY for Pattern 3
+- "soft_filters": object - Boost-if-match metadata filters (boost score but don't exclude) - EMPTY for Pattern 3
 
 Context source logic:
 1. **If "{self.trigger_phrase}" present**: Always search knowledge base
@@ -226,13 +287,13 @@ User: "{self.trigger_phrase} How does neural network training work?"
 Response: {{"search_rag": true, "embedding_source_text": "Neural network training is a process where the network learns from data through backpropagation and gradient descent. During training, the network adjusts its weights and biases by calculating the error between predicted and actual outputs, then propagating this error backward through the layers. The gradient descent algorithm optimizes these parameters iteratively to minimize the loss function, enabling the network to improve its predictions over time.", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 User: "{self.trigger_phrase} papers by John Smith about machine learning"
-Response: {{"search_rag": true, "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience. Common applications include image recognition, natural language processing, and predictive analytics across various industries.", "llm_query": "Based on the provided context, provide information about machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
+Response: {{"search_rag": true, "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience. Common applications include image recognition, natural language processing, and predictive analytics across various industries.", "llm_query": "Based on the provided context, provide information about machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 User: "{self.trigger_phrase} papers published only in 2025 on vibe coding, not from John Wong, with tags gemini"
-Response: {{"search_rag": true, "embedding_source_text": "Vibe coding is a programming approach that emphasizes writing code based on intuition, flow state, and personal rhythm rather than strict methodologies. This coding style prioritizes developer comfort, creativity, and maintaining a natural coding rhythm. Practitioners focus on writing code that feels right and maintains consistent energy levels during development sessions.", "llm_query": "Based on the provided context, explain what vibe coding is.", "hard_filters": {{"publication_date": {{"gte": "2025-01-01", "lt": "2026-01-01"}}}}, "negation_filters": {{"author": "John Wong"}}, "soft_filters": {{"tags": ["gemini"]}}}}
+Response: {{"search_rag": true, "embedding_source_text": "Vibe coding is a programming approach that emphasizes writing code based on intuition, flow state, and personal rhythm rather than strict methodologies. This coding style prioritizes developer comfort, creativity, and maintaining a natural coding rhythm. Practitioners focus on writing code that feels right and maintains consistent energy levels during development sessions.", "llm_query": "Based on the provided context, explain what vibe coding is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 User: "{self.trigger_phrase} research EXCLUSIVELY by Dr. Johnson, excluding robotics work"
-Response: {{"search_rag": true, "embedding_source_text": "Dr. Johnson's research focuses on advanced computational methods and algorithm development across multiple domains. His work spans machine learning optimization, data structures, and software engineering methodologies. The research emphasizes practical applications and theoretical foundations, contributing significantly to the field through innovative approaches and comprehensive analysis of complex problems.", "llm_query": "Based on the provided context, provide information about Dr. Johnson's research.", "hard_filters": {{"author": "Dr. Johnson"}}, "negation_filters": {{"tags": ["robotics"]}}, "soft_filters": {{}}}}
+Response: {{"search_rag": true, "embedding_source_text": "Dr. Johnson's research focuses on advanced computational methods and algorithm development across multiple domains. His work spans machine learning optimization, data structures, and software engineering methodologies. The research emphasizes practical applications and theoretical foundations, contributing significantly to the field through innovative approaches and comprehensive analysis of complex problems.", "llm_query": "Based on the provided context, provide information about Dr. Johnson's research.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 User: "Tell me more about the automation benefits"
 Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}

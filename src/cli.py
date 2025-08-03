@@ -114,14 +114,30 @@ class RAGCLI:
                     "- /bye - Exit the chatbot\n"
                     "- /doc <number> - View detailed document content")
         
-        # Add hybrid search examples if enabled
+        # Add query pattern examples if hybrid search enabled
         if self.use_hybrid_search:
-            hybrid_help = ("\n\nHybrid Search Features:\n"
-                          "- Filter by author: '@knowledgebase papers by Smith'\n"
-                          "- Filter by date: '@knowledgebase articles from 2023'\n"
-                          "- Filter by tags: '@knowledgebase documents about Python'\n"
-                          "- Combined filters: '@knowledgebase Smith's papers about AI from 2023'")
-            base_help += hybrid_help
+            query_examples = ("\n\nQuery Patterns:\n\n"
+                            "📋 Search Mode (document discovery):\n"
+                            "- 'search @knowledgebase on machine learning'\n"
+                            "- '@knowledgebase find papers by Smith from 2024'\n"
+                            "- 'get @knowledgebase articles about Python'\n\n"
+                            
+                            "🔍 Search + Action (find then analyze):\n"
+                            "- 'search @knowledgebase on AI, explain the key concepts'\n"
+                            "- '@knowledgebase find papers on neural networks and summarize'\n"
+                            "- 'get @knowledgebase docs on Python, what are the benefits'\n\n"
+                            
+                            "💬 Direct Questions (knowledge consultation):\n"
+                            "- '@knowledgebase what is machine learning'\n"
+                            "- '@knowledgebase explain the benefits of Python'\n"
+                            "- '@knowledgebase compare REST vs GraphQL APIs'\n\n"
+                            
+                            "🏷️ Filter Examples:\n"
+                            "- Author: 'papers by Smith', 'research by Dr. Johnson'\n"
+                            "- Date: 'from 2024', 'articles since 2023', 'before 2025'\n"
+                            "- Tags: 'about Python', 'tagged as AI', 'on neural networks'\n"
+                            "- Exclusions: 'not by Smith', 'without tag gemini', 'excluding robotics'")
+            base_help += query_examples
         
         return base_help
 

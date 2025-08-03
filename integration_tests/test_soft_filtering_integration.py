@@ -45,6 +45,10 @@ class TestSoftFilteringIntegration:
         search_service_config = cls.config_manager.get('search_service', {})
         cls.search_service = SearchService(cls.mock_qdrant, search_service_config)
     
+    def setup_method(self):
+        """Reset mock state before each test method."""
+        self.mock_qdrant.search.reset_mock()
+    
     @classmethod
     def create_mock_qdrant_db(cls):
         """Create a mock QdrantDB for testing."""
@@ -208,6 +212,9 @@ class TestSoftFilteringIntegration:
     @pytest.mark.integration
     def test_search_service_with_soft_filters(self):
         """Test SearchService unified search with soft filters."""
+        # Reset mock call history from previous tests
+        self.mock_qdrant.search.reset_mock()
+        
         # Setup mock search results
         mock_results = [
             self.create_mock_scored_point("1", 0.8, {
@@ -300,6 +307,9 @@ class TestSoftFilteringIntegration:
     @pytest.mark.integration
     def test_search_service_with_all_filter_types(self):
         """Test SearchService with all three filter types."""
+        # Reset mock call history from previous tests
+        self.mock_qdrant.search.reset_mock()
+        
         # Setup mock search results  
         mock_results = [
             self.create_mock_scored_point("1", 0.8, {
@@ -339,6 +349,9 @@ class TestSoftFilteringIntegration:
     @pytest.mark.integration
     def test_end_to_end_soft_filtering_pipeline(self):
         """Test complete end-to-end pipeline: QueryRewriter -> SearchService."""
+        # Reset mock call history from previous tests
+        self.mock_qdrant.search.reset_mock()
+        
         user_query = "@knowledgebase papers by Smith about Python from 2024"
         
         # Step 1: Transform query with real LLM
@@ -444,6 +457,9 @@ class TestSoftFilteringIntegration:
     @pytest.mark.integration 
     def test_search_service_boost_configuration(self):
         """Test SearchService boost configuration and statistics."""
+        # Reset mock call history from previous tests
+        self.mock_qdrant.search.reset_mock()
+        
         # Test getting boost statistics
         stats = self.search_service.get_boost_statistics()
         
