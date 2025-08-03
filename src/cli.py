@@ -11,6 +11,7 @@ from embedding_client import EmbeddingClient
 from qdrant_db import QdrantDB
 from llm_client import LLMClient
 from query_rewriter import QueryRewriter
+from search_service import SearchService
 from logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class RAGCLI:
         self.qdrant_db = None
         self.llm_client = None
         self.query_rewriter = None
+        self.search_service = None
         self.conversation_history = []
         self.last_rag_results = []
         
@@ -78,6 +80,11 @@ class RAGCLI:
             
             self.query_rewriter = QueryRewriter(self.llm_client, merged_config)
             logger.info("QueryRewriter initialized")
+            
+            # Initialize SearchService with optional soft filtering configuration
+            search_service_config = self.config_manager.get('search_service', {})
+            self.search_service = SearchService(self.qdrant_db, search_service_config)
+            logger.info("SearchService initialized")
             
         except Exception as e:
             logger.error(f"Failed to initialize clients: {e}")
@@ -156,6 +163,70 @@ class RAGCLI:
                 filter_parts.append(f"{key}: {value}")
         
         return ", ".join(filter_parts)
+
+    def _format_three_filter_display(self, query_analysis: Dict[str, Any]) -> str:
+        """Format three-filter display with clear type indicators."""
+        filter_parts = []
+        
+        # Hard filters (must match) - show with 🔒
+        hard_filters = query_analysis.get('hard_filters', {})
+        if hard_filters:
+            hard_parts = []
+            for key, value in hard_filters.items():
+                if value:
+                    hard_parts.append(self._format_single_filter(key, value))
+            if hard_parts:
+                filter_parts.append(f"🔒 {', '.join(hard_parts)}")
+        
+        # Negation filters (must not match) - show with 🚫  
+        negation_filters = query_analysis.get('negation_filters', {})
+        if negation_filters:
+            neg_parts = []
+            for key, value in negation_filters.items():
+                if value:
+                    neg_parts.append(f"NOT {self._format_single_filter(key, value)}")
+            if neg_parts:
+                filter_parts.append(f"🚫 {', '.join(neg_parts)}")
+        
+        # Soft filters (boost if match) - show with ⭐
+        soft_filters = query_analysis.get('soft_filters', {})
+        if soft_filters:
+            soft_parts = []
+            for key, value in soft_filters.items():
+                if value:
+                    soft_parts.append(self._format_single_filter(key, value))
+            if soft_parts:
+                filter_parts.append(f"⭐ {', '.join(soft_parts)}")
+        
+        return "; ".join(filter_parts)
+    
+    def _format_single_filter(self, key: str, value: Any) -> str:
+        """Format a single filter key-value pair."""
+        if key == "author":
+            return f"author: {value}"
+        elif key == "tags":
+            if isinstance(value, list):
+                tags_str = ", ".join(str(tag) for tag in value)
+                return f"tags: [{tags_str}]"
+            else:
+                return f"tags: {value}"
+        elif key == "publication_date":
+            if isinstance(value, dict):
+                # Handle date range objects
+                if "gte" in value and "lt" in value:
+                    start_date = value["gte"][:7] if len(value["gte"]) > 7 else value["gte"]
+                    end_date = value["lt"][:7] if len(value["lt"]) > 7 else value["lt"]
+                    return f"date: {start_date} to {end_date}"
+                elif "gte" in value:
+                    start_date = value["gte"][:7] if len(value["gte"]) > 7 else value["gte"]
+                    return f"date: from {start_date}"
+                elif "lt" in value:
+                    end_date = value["lt"][:7] if len(value["lt"]) > 7 else value["lt"]
+                    return f"date: before {end_date}"
+            else:
+                return f"date: {value}"
+        else:
+            return f"{key}: {value}"
 
     def _display_panel_message(self, message: str, title: str, border_style: str = "blue"):
         """Helper method to display a message within a rich.panel.Panel."""
@@ -284,29 +355,32 @@ class RAGCLI:
         return {
             'search_rag': search_rag,
             'embedding_source_text': clean_query,
-            'llm_query': user_input
+            'llm_query': user_input,
+            'hard_filters': {},
+            'negation_filters': {},
+            'soft_filters': {}
         }
     
-    def _perform_rag_search(self, embedding_text: str, filters: Dict[str, Any] = None) -> List[Any]:
-        """Perform RAG search using optimized embedding text and optional filters."""
+    def _perform_rag_search(self, embedding_text: str, query_analysis: Dict[str, Any]) -> List[Any]:
+        """Perform RAG search using SearchService with all filter types."""
         try:
             # Generate embedding for the optimized text
             query_embedding = self.embedding_client.get_embedding(embedding_text)
             
-            # Prepare search parameters
-            search_params = {
-                'query_vector': query_embedding,
-                'limit': self.top_k,
-                'score_threshold': self.min_score
-            }
+            # Extract all filter types from query analysis
+            hard_filters = query_analysis.get('hard_filters', {})
+            negation_filters = query_analysis.get('negation_filters', {})
+            soft_filters = query_analysis.get('soft_filters', {})
             
-            # Add filters if hybrid search is enabled and filters are provided
-            if self.use_hybrid_search and filters:
-                search_params['filters'] = filters
-                logger.info(f"Using hybrid search with filters: {list(filters.keys())}")
-            
-            # Search in Qdrant
-            results = self.qdrant_db.search(**search_params)
+            # Use SearchService unified search with all filter types
+            results = self.search_service.unified_search(
+                query_vector=query_embedding,
+                top_k=self.top_k,
+                hard_filters=hard_filters if self.use_hybrid_search else None,
+                negation_filters=negation_filters if self.use_hybrid_search else None,
+                soft_filters=soft_filters if self.use_hybrid_search else None,
+                score_threshold=self.min_score
+            )
             
             logger.info(f"RAG search returned {len(results)} results")
             return results
@@ -622,18 +696,21 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 use_rag = query_analysis['search_rag']
                 
                 if use_rag:
-                    # Perform RAG search with optimized embedding text and optional filters
+                    # Perform RAG search with optimized embedding text and all filter types
                     embedding_text = query_analysis['embedding_source_text']
-                    filters = query_analysis.get('hard_filters', {})
                     
                     search_display = embedding_text[:DISPLAY_TEXT_TRUNCATE_LENGTH] + "..." if len(embedding_text) > DISPLAY_TEXT_TRUNCATE_LENGTH else embedding_text
-                    if self.use_hybrid_search and filters:
-                        filter_info = self._format_filter_display(filters)
-                        self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}' (filters: {filter_info})...[/dim]")
+                    
+                    if self.use_hybrid_search:
+                        filter_info = self._format_three_filter_display(query_analysis)
+                        if filter_info:
+                            self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}' ({filter_info})...[/dim]")
+                        else:
+                            self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}'...[/dim]")
                     else:
                         self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}'...[/dim]")
                     
-                    rag_results = self._perform_rag_search(embedding_text, filters)
+                    rag_results = self._perform_rag_search(embedding_text, query_analysis)
                     self.last_rag_results = rag_results
                     
                     if self._should_use_rag_context(rag_results):
