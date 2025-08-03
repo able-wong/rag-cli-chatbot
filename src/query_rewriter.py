@@ -213,10 +213,10 @@ User: "find {self.trigger_phrase} about Python from 2024, then compare with Java
 Response: {{"search_rag": true, "embedding_source_text": "Python", "llm_query": "Based on the provided context, compare Python with Java.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}}}
 
 User: "{self.trigger_phrase} search on machine learning from Dr. Smith"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, provide information about machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Dr. Smith"}}}}
+Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Dr. Smith"}}}}
 
 User: "{self.trigger_phrase} find documents about AI"
-Response: {{"search_rag": true, "embedding_source_text": "AI", "llm_query": "Based on the provided context, provide information about AI.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+Response: {{"search_rag": true, "embedding_source_text": "AI", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 {self._build_shared_examples()}"""
     

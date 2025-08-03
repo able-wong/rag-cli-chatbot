@@ -250,7 +250,7 @@ class LLMClient:
         ]
         
         for pattern in patterns:
-            match = re.match(pattern, text, re.DOTALL)
+            match = re.search(pattern, text, re.DOTALL)
             if match:
                 extracted = match.group(1).strip()
                 logger.debug(f"Stripped markdown wrapper, extracted: '{extracted[:100]}...'")
