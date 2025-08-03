@@ -6,6 +6,7 @@ A command-line chatbot with Retrieval-Augmented Generation (RAG) capabilities. S
 
 - **Interactive CLI Interface**: Rich terminal interface with colors and formatting
 - **RAG Capabilities**: Search and retrieve information from knowledge base
+- **Hybrid Search**: Natural language metadata filtering (author, date, tags)
 - **Dual Retrieval Strategies**: Choose between keyword-based "rewrite" or semantic "HyDE" search
 - **Conversational Context Awareness**: Intelligent follow-up handling without re-searching
 - **LLM-Based Query Transformation**: Smart query analysis and routing for better results
@@ -148,6 +149,87 @@ rag:
 - **Rewrite**: Start here for general use, good performance
 - **HyDE**: Switch if you need better retrieval of conceptually related content
 
+### Hybrid Search with Intent-Based Patterns
+
+**Enhanced RAG System**: The application now uses intent-based pattern detection to intelligently handle different types of queries with natural language metadata filtering.
+
+**Enable Hybrid Search**:
+```yaml
+rag:
+  use_hybrid_search: true  # Enable natural language metadata filtering
+  retrieval_strategy: "rewrite"  # Works with both rewrite and hyde
+  trigger_phrase: "@knowledgebase"
+```
+
+**Query Patterns:**
+
+The system automatically detects three distinct query patterns based on user intent:
+
+#### 📋 Pattern 1: Pure Search (Document Discovery)
+**Intent**: Find and browse documents  
+**Behavior**: Extracts metadata filters + returns document summaries with question suggestions
+
+**Examples:**
+- `search @knowledgebase on machine learning`
+- `@knowledgebase find papers by Smith from 2024`
+- `get @knowledgebase articles about Python`
+- `locate @knowledgebase documents tagged AI, not by Johnson`
+
+#### 🔍 Pattern 2: Search + Action (Find Then Analyze)  
+**Intent**: Find documents and perform analysis on them  
+**Behavior**: Extracts metadata filters + performs specified action on retrieved results
+
+**Examples:**
+- `search @knowledgebase on AI, explain the key concepts`
+- `@knowledgebase find papers by Smith and summarize the findings`
+- `get @knowledgebase docs on Python, what are the benefits`
+- `@knowledgebase retrieve neural network research, compare the approaches`
+
+#### 💬 Pattern 3: Direct Questions (Knowledge Consultation)
+**Intent**: Ask direct questions about topics  
+**Behavior**: No metadata extraction - treats all context as semantic information
+
+**Examples:**
+- `@knowledgebase what is machine learning`
+- `@knowledgebase explain the benefits of Python programming`
+- `@knowledgebase compare REST vs GraphQL APIs`
+- `@knowledgebase how does neural network training work`
+
+**Key Innovation: Intent-Based Detection**
+- **No rigid syntax**: Uses natural language understanding instead of word-order rules
+- **Flexible expressions**: Supports various connectors ("and", "then", commas, contextual flow)
+- **Eliminates ambiguity**: `@knowledgebase search on AI` and `search @knowledgebase on AI` now behave consistently
+
+**Three-Filter System:**
+
+| Filter Type | Keywords | Behavior | Example |
+|------------|----------|----------|---------|
+| **Hard Filters** | "only", "exclusively", "strictly", "limited to" | Must match (excludes non-matching) | `papers ONLY from 2024` |
+| **Negation Filters** | "not from", "excluding", "except", "without" | Must NOT match (excludes matching) | `research not by Johnson` |  
+| **Soft Filters** | All other metadata mentions | Boost if match (doesn't exclude) | `papers by Smith about AI` |
+
+**Natural Language Metadata Examples:**
+
+| User Query | Extracted Filters | Pattern | Result |
+|------------|------------------|---------|---------|
+| `search @knowledgebase papers by Smith` | `{"author": "Smith"}` (soft) | Pattern 1 | Document summaries |
+| `@knowledgebase find articles ONLY from 2024` | `{"publication_date": "2024"}` (hard) | Pattern 1 | Only 2024 docs |
+| `get @knowledgebase ML papers, not by Johnson` | `{"tags": ["ML"]}` (soft), `{"author": "Johnson"}` (negation) | Pattern 1 | ML papers excluding Johnson |
+| `search @knowledgebase on Python and explain benefits` | `{"tags": ["python"]}` (soft) | Pattern 2 | Find + explain |
+| `@knowledgebase what is machine learning by Smith` | No filters extracted | Pattern 3 | Direct question |
+
+**Requirements:**
+- Qdrant collection must have payload indexes for: `tags`, `author`, `publication_date`  
+- These indexes are created during document ingestion
+- System logs warnings if indexes are missing (performance impact)
+
+**Benefits:**
+- **Intent-Aware**: Automatically chooses the right behavior based on user intent
+- **Natural Interface**: No complex syntax or trigger words required
+- **Flexible Language**: Supports various phrasings and connectors
+- **Precision**: Combines semantic search with intelligent metadata filtering
+- **Performance**: Uses Qdrant indexes for efficient filtering
+
 ### CLI Settings
 
 **System Prompt Customization**:
@@ -183,11 +265,29 @@ cli:
 ### Basic Commands
 
 - **General Chat**: Type normally to chat without knowledge base
-- **Knowledge Base Search**: Use `@knowledgebase` to trigger RAG search
-- **System Info**: `/info` - Display current configuration including retrieval strategy
+- **Knowledge Base Access**: Use `@knowledgebase` to trigger RAG search with intent-based patterns
+- **System Info**: `/info` - Display current configuration including hybrid search status  
+- **Help**: `/help` - Show comprehensive query pattern examples
 - **Clear History**: `/clear` - Reset conversation
 - **Exit**: `/bye` - Exit the application
 - **View Documents**: `/doc <number>` - See full document content
+
+### Query Patterns Usage
+
+**📋 Document Discovery** (Pattern 1):
+- `search @knowledgebase on neural networks`
+- `@knowledgebase find papers by Dr. Smith from 2024`
+- `get @knowledgebase articles about Python, tagged machine learning`
+
+**🔍 Search + Analysis** (Pattern 2):  
+- `search @knowledgebase on AI research, explain the main trends`
+- `@knowledgebase find Smith's papers and summarize the key findings`
+- `get @knowledgebase Python docs, what are the best practices`
+
+**💬 Direct Questions** (Pattern 3):
+- `@knowledgebase what is the difference between supervised and unsupervised learning`
+- `@knowledgebase explain how neural networks work`
+- `@knowledgebase compare the benefits of Python vs Java for data science`
 
 ### Example Session
 
@@ -199,10 +299,10 @@ $ python3 main.py
 You: Hello, how are you?
 Assistant: Hello! I'm doing well, thank you for asking...
 
-You: @knowledgebase What is Python?
-🔍 Searching knowledge base with 'Python is a high-level programming language known for its simplicity and readability. It supports multiple programming paradigms and has extensive libraries...'...
-💭 Thinking with LLM prompt 'Explain what Python is based on the provided context, including...'...
-Assistant: Based on the knowledge base, Python is a high-level programming language...
+You: @knowledgebase what is Python?
+🔍 Searching knowledge base with 'Python programming language'...
+💭 Thinking with LLM prompt 'Based on the provided context, explain what Python is...'...
+Assistant: Based on the knowledge base, Python is a high-level programming language known for its simplicity and readability...
 
 📚 Retrieved from knowledge base:
 ┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
@@ -213,20 +313,42 @@ Assistant: Based on the knowledge base, Python is a high-level programming langu
 └───┴─────────────────────────────────────────────┴────────┘
 💡 Use /doc <number> to see full content
 
-You: Tell me more about its web frameworks
-💭 Thinking with LLM prompt 'Provide more details about Python web frameworks based on conte...'...
-Assistant: Based on our previous discussion about Python, here are the popular web frameworks...
+You: search @knowledgebase on neural networks
+🔍 Searching knowledge base with 'neural networks'...
+💭 Thinking with SEARCH_SUMMARY_MODE...
+Assistant: 📋 **Document Summary**: Found 5 documents about neural networks covering deep learning fundamentals, training algorithms, and practical applications...
 
-You: What about Django specifically?
-💭 Thinking with LLM prompt 'Explain Django specifically based on context in previous conver...'...
-Assistant: Django, as mentioned in our conversation, is a high-level Python web framework...
+**Key Topics**: Backpropagation, CNN architectures, Training optimization, Real-world applications
+
+**Question Suggestions**:
+- What are the main types of neural network architectures?
+- How does backpropagation work in neural network training?
+- What are common applications of convolutional neural networks?
+- What optimization techniques improve neural network performance?
+
+You: @knowledgebase find papers by Smith and explain the key findings
+🔍 Searching knowledge base with 'papers' (filters: author=Smith)...
+💭 Thinking with LLM prompt 'Based on the provided context, explain the key findings...'...
+Assistant: Based on Smith's papers from the knowledge base, here are the key findings across their research...
+
+📚 Retrieved from knowledge base:
+┏━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┓
+┃ # ┃ Source                                      ┃ Score  ┃
+┡━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━┩
+│ 1 │ Smith_ML_Research_2024.pdf                  │ 0.934  │
+│ 2 │ Smith_Deep_Learning_2024.pdf               │ 0.889  │
+└───┴─────────────────────────────────────────────┴────────┘
+💡 Use /doc <number> to see full content
 ```
 
 **Key Features Demonstrated:**
-- **Knowledge Base Search**: `@knowledgebase` triggers RAG search with optimized queries
-- **HyDE Retrieval**: Shows hypothetical document generation for semantic search (example uses HyDE strategy)
-- **Conversational Follow-ups**: "Tell me more..." uses conversation history without re-searching
-- **Smart Context Switching**: System intelligently chooses between knowledge base and conversation context
+- **Intent-Based Patterns**: System automatically detects search vs. question vs. search+action intents
+- **Pattern 3 (Direct Question)**: `@knowledgebase what is Python?` - treats metadata as semantic context
+- **Pattern 1 (Pure Search)**: `search @knowledgebase on neural networks` - returns document summaries + suggestions  
+- **Pattern 2 (Search+Action)**: `@knowledgebase find papers by Smith and explain` - searches then analyzes
+- **Natural Language Filtering**: Automatically extracts author, date, and tag filters from natural language
+- **Three-Filter System**: Hard/negation/soft filters with intelligent classification
+- **Flexible Language**: No rigid syntax - supports various phrasings and connectors
 
 ## 🧪 Testing
 
@@ -260,6 +382,30 @@ source venv/bin/activate
 - Valid `config/config.yaml` with working LLM provider settings
 - Internet connection for cloud LLM providers (Gemini)
 - Proper API keys configured
+
+### Query Pattern Testing
+
+Test how the query rewriter transforms different patterns:
+
+```bash
+source venv/bin/activate
+
+# Test different query patterns  
+python check_query_rewriter.py '@knowledgebase what is machine learning'
+python check_query_rewriter.py 'search @knowledgebase on AI research'
+python check_query_rewriter.py '@knowledgebase find papers by Smith and summarize'
+
+# Test with different strategies
+RAG_STRATEGY=hyde python check_query_rewriter.py '@knowledgebase explain neural networks'
+RAG_STRATEGY=rewrite python check_query_rewriter.py 'search @knowledgebase on Python'
+```
+
+The tool shows the complete transformation including:
+- Detected query pattern (1, 2, or 3)
+- Extracted metadata filters (hard/negation/soft)
+- Generated embedding text
+- Final LLM prompt
+- Strategy used (Rewrite vs HyDE)
 
 ### Full Test Suite
 
@@ -295,11 +441,12 @@ Available commands:
 ```
 rag-cli-chatbot/
 ├── src/                    # Source code
-│   ├── cli.py             # Main CLI interface
+│   ├── cli.py             # Main CLI interface with intent-based patterns
 │   ├── config_manager.py  # Configuration management
 │   ├── embedding_client.py # Embedding generation
 │   ├── llm_client.py      # LLM interaction
-│   ├── query_rewriter.py  # LLM-based query transformation
+│   ├── query_rewriter.py  # Intent-based query transformation & pattern detection
+│   ├── search_service.py  # Unified search with soft filtering
 │   ├── qdrant_db.py       # Vector database client
 │   └── logging_config.py  # Logging setup
 ├── config/                # Configuration files
@@ -309,11 +456,14 @@ rag-cli-chatbot/
 │   ├── test_config_manager.py
 │   ├── test_phase1_clients.py
 │   ├── test_query_rewriter.py
+│   ├── test_search_service.py
 │   └── test_cli_mocked.py
 ├── integration_tests/     # Integration tests with real LLM providers
 │   ├── test_query_rewriter_integration.py
+│   ├── test_soft_filtering_integration.py
 │   └── test_cli_integration.py
 ├── main.py               # Application entry point
+├── check_query_rewriter.py # Query pattern testing tool
 ├── requirements.txt      # Python dependencies
 ├── doit.sh              # Development commands
 └── README.md            # This file
@@ -335,17 +485,22 @@ rag-cli-chatbot/
 - [x] Multiple LLM providers (Ollama, Gemini)
 - [x] Multiple embedding providers (SentenceTransformers, Ollama, Gemini) 
 - [x] Qdrant vector database integration
-- [x] RAG trigger detection (@knowledgebase)
+- [x] **Intent-Based Query Patterns** - automatic detection of search vs. question vs. search+action intents
+- [x] **Three-Pattern System** - Pure Search, Search+Action, Direct Questions with different behaviors
+- [x] **Natural Language Metadata Filtering** - extract author, date, tag filters from conversational language
+- [x] **Three-Filter Classification** - Hard/Negation/Soft filters with intelligent keyword detection
 - [x] **Dual retrieval strategies** - Rewrite (keyword-based) and HyDE (semantic)
-- [x] **LLM-based query transformation** for improved search accuracy
+- [x] **Unified Search Service** - combines vector search with metadata filtering and soft boosting
+- [x] **LLM-based query transformation** for improved search accuracy and pattern detection
 - [x] **Conversational context awareness** - intelligent follow-up handling
 - [x] **Configurable system prompts** - customize assistant role and personality
-- [x] Structured prompt generation with context instructions
+- [x] **Flexible Language Support** - no rigid syntax, supports various connectors and phrasings
 - [x] Smart fallback system with edge case handling
-- [x] Rich CLI interface with formatted output and progress indicators
+- [x] Rich CLI interface with formatted output and comprehensive help examples
+- [x] Query pattern testing tool (`check_query_rewriter.py`)
 - [x] Conversation history management
 - [x] Document detail viewing
-- [x] Comprehensive test suite with integration tests (76 total tests)
+- [x] Comprehensive test suite with integration tests (76+ total tests)
 
 ## 🔮 Future Enhancements
 

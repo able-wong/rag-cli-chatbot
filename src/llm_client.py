@@ -1,5 +1,7 @@
 import logging
 import requests
+import json
+import re
 from typing import List, Dict, Any, Optional
 import google.generativeai as genai
 
@@ -167,3 +169,93 @@ class LLMClient:
         except Exception as e:
             logger.error(f"Failed to connect to LLM service: {e}")
             return False
+    
+    def get_json_response(
+        self, 
+        messages: List[Dict[str, str]], 
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """
+        Get JSON response from LLM, handling markdown wrappers automatically.
+        
+        This method:
+        1. Gets raw text response from LLM
+        2. Strips markdown code block wrappers (```json ... ```)
+        3. Parses JSON and returns dictionary
+        4. Provides clear error messages for debugging
+        
+        Args:
+            messages: List of message dictionaries for the LLM
+            temperature: Optional temperature override
+            max_tokens: Optional max tokens override
+            
+        Returns:
+            Parsed JSON response as dictionary
+            
+        Raises:
+            ValueError: If response is not valid JSON
+            Exception: If LLM call fails
+        """
+        try:
+            # Get raw text response from LLM
+            raw_response = self.get_llm_response(messages, temperature, max_tokens)
+            
+            if not raw_response or not raw_response.strip():
+                raise ValueError("LLM returned empty response")
+            
+            # Strip markdown code block wrappers if present
+            cleaned_response = self._strip_markdown_json_wrapper(raw_response.strip())
+            
+            # Parse JSON
+            try:
+                parsed_json = json.loads(cleaned_response)
+                logger.debug(f"Successfully parsed JSON response: {type(parsed_json)}")
+                return parsed_json
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response. Raw: '{raw_response[:200]}...', Cleaned: '{cleaned_response[:200]}...', Error: {e}")
+                raise ValueError(f"Invalid JSON response from LLM: {e}")
+                
+        except Exception as e:
+            logger.error(f"Failed to get JSON response from LLM: {e}")
+            raise
+    
+    def _strip_markdown_json_wrapper(self, text: str) -> str:
+        """
+        Strip markdown JSON code block wrappers from text.
+        
+        Handles these patterns:
+        - ```json\n{...}\n```
+        - ```\n{...}\n```
+        - ````json\n{...}\n````
+        - Raw JSON without wrappers
+        
+        Args:
+            text: Raw text that may contain markdown wrappers
+            
+        Returns:
+            Cleaned text with wrappers removed
+        """
+        # Remove leading/trailing whitespace
+        text = text.strip()
+        
+        # Pattern to match markdown code blocks with optional json specifier
+        # Matches: ```json or ``` or ````json or ````
+        # Captures the content between the backticks
+        patterns = [
+            r'```(?:json)?\s*\n(.*?)\n```',  # Standard triple backticks
+            r'````(?:json)?\s*\n(.*?)\n````',  # Quad backticks (rare but possible)
+            r'```(?:json)?\s*(.*?)```',  # Single line variant
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text, re.DOTALL)
+            if match:
+                extracted = match.group(1).strip()
+                logger.debug(f"Stripped markdown wrapper, extracted: '{extracted[:100]}...'")
+                return extracted
+        
+        # If no markdown wrapper found, return original text
+        logger.debug("No markdown wrapper detected, using raw text")
+        return text

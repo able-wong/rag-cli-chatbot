@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, ScoredPoint
+from qdrant_client.models import Distance, VectorParams, PointStruct, ScoredPoint, Filter, FieldCondition, MatchValue, MatchAny, DatetimeRange
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,7 @@ class QdrantDB:
         self.distance_metric = config.get('distance_metric', 'cosine')
         self.client = None
         self._initialize_client()
+        self._validate_payload_indexes()
     
     def _initialize_client(self):
         """Initialize Qdrant client based on configuration."""
@@ -89,9 +90,23 @@ class QdrantDB:
         self, 
         query_vector: List[float], 
         limit: int = 5, 
-        score_threshold: Optional[float] = None
+        score_threshold: Optional[float] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        negation_filters: Optional[Dict[str, Any]] = None
     ) -> List[ScoredPoint]:
-        """Search for similar vectors in the collection."""
+        """
+        Search for similar vectors in the collection with optional metadata filtering.
+        
+        Args:
+            query_vector: The vector to search for
+            limit: Maximum number of results to return
+            score_threshold: Minimum similarity score threshold
+            filters: Dictionary of positive filters (must match)
+            negation_filters: Dictionary of negation filters (must NOT match)
+        
+        Returns:
+            List of ScoredPoint objects matching the criteria
+        """
         try:
             if not self.collection_exists():
                 logger.warning(f"Collection '{self.collection_name}' does not exist")
@@ -105,6 +120,20 @@ class QdrantDB:
             
             if score_threshold is not None:
                 search_params["score_threshold"] = score_threshold
+            
+            # Build combined filter with both positive and negative conditions
+            if filters or negation_filters:
+                qdrant_filter = self._build_combined_filter(filters, negation_filters)
+                if qdrant_filter:
+                    search_params["query_filter"] = qdrant_filter
+                    
+                    # Log applied filters
+                    applied_filters = []
+                    if filters:
+                        applied_filters.extend([f"+{k}" for k in filters.keys()])
+                    if negation_filters:
+                        applied_filters.extend([f"-{k}" for k in negation_filters.keys()])
+                    logger.info(f"Applied hybrid search filters: {applied_filters}")
             
             results = self.client.search(**search_params)
             
@@ -155,3 +184,165 @@ class QdrantDB:
         except Exception as e:
             logger.error(f"Failed to get collection info: {e}")
             return None
+    
+    def _validate_payload_indexes(self):
+        """Validate that required payload indexes exist for hybrid search functionality."""
+        required_indexes = ['tags', 'author', 'publication_date']
+        
+        try:
+            if not self.collection_exists():
+                logger.info("Collection does not exist yet, skipping payload index validation")
+                return
+            
+            # Get collection info to check payload schema
+            collection_info = self.client.get_collection(self.collection_name)
+            payload_schema = getattr(collection_info.config, 'params', {}).get('payload_schema', {})
+            
+            missing_indexes = []
+            for field in required_indexes:
+                if field not in payload_schema:
+                    missing_indexes.append(field)
+            
+            if missing_indexes:
+                logger.warning(
+                    f"Missing payload indexes for hybrid search: {missing_indexes}. "
+                    f"Hybrid search will work but may have degraded performance. "
+                    f"These indexes should be created during document ingestion."
+                )
+            else:
+                logger.info("All required payload indexes for hybrid search are present")
+                
+        except Exception as e:
+            logger.warning(f"Could not validate payload indexes: {e}. Hybrid search may have degraded performance.")
+    
+    def _build_combined_filter(self, filters: Optional[Dict[str, Any]], negation_filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
+        """
+        Build a combined Qdrant Filter object with both positive and negative conditions.
+        
+        Args:
+            filters: Dictionary containing positive filter conditions (must match)
+            negation_filters: Dictionary containing negative filter conditions (must NOT match)
+        
+        Returns:
+            Qdrant Filter object or None if no valid filters
+        """
+        must_conditions = []
+        must_not_conditions = []
+        
+        try:
+            # Build positive conditions (must match)
+            if filters:
+                positive_conditions = self._build_filter_conditions(filters)
+                must_conditions.extend(positive_conditions)
+            
+            # Build negative conditions (must NOT match)
+            if negation_filters:
+                negative_conditions = self._build_filter_conditions(negation_filters)
+                must_not_conditions.extend(negative_conditions)
+            
+            # Create Filter object with both must and must_not conditions
+            if must_conditions or must_not_conditions:
+                filter_params = {}
+                if must_conditions:
+                    filter_params['must'] = must_conditions
+                if must_not_conditions:
+                    filter_params['must_not'] = must_not_conditions
+                
+                return Filter(**filter_params)
+            else:
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error building combined filter: {e}")
+            return None
+
+    def _build_filter_conditions(self, filters: Dict[str, Any]) -> List[FieldCondition]:
+        """
+        Build a list of FieldCondition objects from a filters dictionary.
+        
+        Args:
+            filters: Dictionary containing filter conditions
+        
+        Returns:
+            List of FieldCondition objects
+        """
+        conditions = []
+        
+        try:
+            # Handle author filter
+            if 'author' in filters and filters['author']:
+                conditions.append(
+                    FieldCondition(
+                        key="author",
+                        match=MatchValue(value=filters['author'])
+                    )
+                )
+            
+            # Handle tags filter (array field)
+            if 'tags' in filters and filters['tags']:
+                tags = filters['tags'] if isinstance(filters['tags'], list) else [filters['tags']]
+                conditions.append(
+                    FieldCondition(
+                        key="tags",
+                        match=MatchAny(any=tags)
+                    )
+                )
+            
+            # Handle publication_date filter
+            if 'publication_date' in filters and filters['publication_date']:
+                pub_date = filters['publication_date']
+                
+                # Handle new date range format with gte/lt for DATETIME index
+                if isinstance(pub_date, dict) and ('gte' in pub_date or 'lt' in pub_date):
+                    # Use datetime range for efficient filtering with DATETIME index
+                    range_conditions = {}
+                    if 'gte' in pub_date:
+                        range_conditions['gte'] = pub_date['gte']
+                    if 'lt' in pub_date:
+                        range_conditions['lt'] = pub_date['lt']
+                    
+                    conditions.append(
+                        FieldCondition(
+                            key="publication_date",
+                            range=DatetimeRange(**range_conditions)
+                        )
+                    )
+                    logger.debug(f"Applied publication_date range filter: {range_conditions}")
+                
+                # Handle legacy string format for backward compatibility
+                elif isinstance(pub_date, str):
+                    if len(pub_date) == 4:  # Year only (e.g., "2023")
+                        # Convert to range for better performance with DATETIME index
+                        conditions.append(
+                            FieldCondition(
+                                key="publication_date",
+                                range=DatetimeRange(
+                                    gte=f"{pub_date}-01-01",
+                                    lt=f"{int(pub_date)+1}-01-01"
+                                )
+                            )
+                        )
+                        logger.debug(f"Converted year '{pub_date}' to date range")
+                    else:  # Exact date match - keep as string match for compatibility
+                        conditions.append(
+                            FieldCondition(
+                                key="publication_date",
+                                match=MatchValue(value=pub_date)
+                            )
+                        )
+            
+            # Handle title filter (if provided)
+            if 'title' in filters and filters['title']:
+                conditions.append(
+                    FieldCondition(
+                        key="title",
+                        match=MatchValue(value=filters['title'])
+                    )
+                )
+            
+            return conditions
+                
+        except Exception as e:
+            logger.error(f"Error building filter conditions: {e}")
+            return []
+

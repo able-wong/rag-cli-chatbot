@@ -59,6 +59,15 @@ class ConfigManager:
             api_key = os.getenv('QDRANT_API_KEY')
             if api_key:
                 config['vector_db']['api_key'] = api_key
+        
+        # Query Rewriter configuration
+        if 'query_rewriter' not in config:
+            config['query_rewriter'] = {}
+        
+        # RAG Strategy override
+        rag_strategy = os.getenv('RAG_STRATEGY')
+        if rag_strategy and rag_strategy.lower() in ['hyde', 'rewrite']:
+            config['query_rewriter']['retrieval_strategy'] = rag_strategy.lower()
     
     def get(self, key_path: str, default: Any = None) -> Any:
         """Get configuration value using dot notation (e.g., 'llm.provider')."""

@@ -105,6 +105,35 @@ rag:
   # - Switch to "hyde" if you need better retrieval of conceptually related documents
   # - Test both strategies with your specific knowledge base to determine optimal choice
   
+  # HYBRID SEARCH SETTINGS
+  use_hybrid_search: false             # Enable metadata filtering from natural language queries
+  
+  # HYBRID SEARCH EXPLANATION:
+  # When enabled, the system can extract metadata filters from natural language queries
+  # and apply them using three different filtering strategies:
+  #
+  # FILTER TYPES:
+  # 1. Hard Filters (must match): "papers ONLY from 2025", "articles EXCLUSIVELY by Smith"
+  # 2. Negation Filters (must not match): "papers not by Johnson", "excluding draft documents"
+  # 3. Soft Filters (boost if match): "papers by Smith", "from 2024", "tagged Python"
+  #
+  # EXAMPLES:
+  # - "papers by John Smith" → soft filter (boosts Smith's papers, still shows others)
+  # - "articles ONLY from 2023" → hard filter (shows only 2023 articles)
+  # - "documents not by Johnson" → negation filter (excludes Johnson's work)
+  # - "Smith's papers about AI from March 2023" → combines soft filters for ranking
+  #
+  # Requirements:
+  # - Qdrant collection must have payload indexes for: tags, author, publication_date
+  # - These indexes are created during document ingestion
+  # - System will log warnings if indexes are missing (performance impact)
+  #
+  # Benefits:
+  # - More nuanced ranking with soft filters (see search_service configuration below)
+  # - Precise filtering with hard/negation filters when needed
+  # - Natural language interface - no need to learn complex filter syntax
+  # - Works with both "rewrite" and "hyde" retrieval strategies
+  
   # SEARCH SETTINGS
   top_k: 10                             # Number of documents to retrieve
   min_score: 0.3                       # Minimum similarity score threshold
@@ -118,6 +147,49 @@ rag:
     When provided with context from the knowledge base, use it to answer questions accurately.
     If the context doesn't contain relevant information, clearly state that you cannot answer based on the available knowledge base.
     Never make up information that isn't in the provided context.
+
+# ============================================================================
+# SEARCH SERVICE CONFIGURATION (Soft Filtering)
+# ============================================================================
+search_service:
+  # SOFT FILTER BOOSTING CONFIGURATION
+  # These settings control how soft filters boost document scores without excluding results
+  
+  # BASE BOOST SETTINGS
+  base_boost_per_match: 0.12            # Base boost percentage for each filter match (12%)
+  diminishing_factor: 0.75              # Diminishing returns factor (each subsequent match worth 75% of previous)
+  max_total_boost: 0.6                  # Maximum total boost percentage (60% cap)
+  
+  # FIELD IMPORTANCE WEIGHTS
+  # Higher weights mean more important fields get stronger boosts
+  field_weights:
+    tags: 1.2                           # Explicit tags are very important (120% weight)
+    title: 1.0                          # Title matches are standard importance (100% weight)
+    author: 0.8                         # Author matches are somewhat important (80% weight)
+    publication_date: 0.6               # Date matches are less important (60% weight)
+    file_extension: 0.4                 # File type is least important (40% weight)
+    default: 0.7                        # Default weight for other fields (70% weight)
+  
+  # SEARCH BEHAVIOR SETTINGS
+  fetch_multiplier: 4                   # Fetch 4x more documents when soft filtering (for re-ranking)
+  
+  # SOFT FILTER EXPLANATION:
+  # Soft filters boost document scores based on metadata matches without excluding documents.
+  # Unlike hard filters (must match) or negation filters (must not match), soft filters
+  # increase relevance scores when metadata criteria are met.
+  #
+  # Example: "@knowledgebase papers by Smith about Python from 2024"
+  # - Semantic search finds all relevant documents about Python
+  # - Documents by "Smith" get author boost (0.12 * 0.8 = 9.6% boost)
+  # - Documents from "2024" get date boost (0.12 * 0.6 = 7.2% boost)
+  # - Documents with both get diminishing returns: 9.6% + (7.2% * 0.75) = 15% total boost
+  # - Final ranking combines semantic similarity + metadata boosts
+  #
+  # Benefits:
+  # - More nuanced ranking than hard filters
+  # - Documents with preferred metadata rank higher
+  # - Still shows relevant documents even if metadata doesn't match exactly
+  # - Natural language queries work intuitively
 
 # ============================================================================
 # DOCUMENT CONFIGURATION

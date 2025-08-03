@@ -11,6 +11,7 @@ from embedding_client import EmbeddingClient
 from qdrant_db import QdrantDB
 from llm_client import LLMClient
 from query_rewriter import QueryRewriter
+from search_service import SearchService
 from logging_config import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class RAGCLI:
         self.qdrant_db = None
         self.llm_client = None
         self.query_rewriter = None
+        self.search_service = None
         self.conversation_history = []
         self.last_rag_results = []
         
@@ -44,6 +46,7 @@ class RAGCLI:
         self.top_k = self.rag_config.get('top_k', 5)
         self.max_context_length = self.rag_config.get('max_context_length', 8000)
         self.max_history_length = self.cli_config.get('max_history_length', 20)
+        self.use_hybrid_search = self.rag_config.get('use_hybrid_search', False)
         
         self._initialize_clients()
         self._initialize_conversation()
@@ -78,6 +81,11 @@ class RAGCLI:
             self.query_rewriter = QueryRewriter(self.llm_client, merged_config)
             logger.info("QueryRewriter initialized")
             
+            # Initialize SearchService with optional soft filtering configuration
+            search_service_config = self.config_manager.get('search_service', {})
+            self.search_service = SearchService(self.qdrant_db, search_service_config)
+            logger.info("SearchService initialized")
+            
         except Exception as e:
             logger.error(f"Failed to initialize clients: {e}")
             raise
@@ -96,15 +104,107 @@ class RAGCLI:
     
     def _get_help_text(self) -> str:
         """Return the help text string."""
-        return ("🤖 Welcome to RAG CLI Chatbot!\n\n"
-                "Commands:\n"
-                "- Type normally for general chat\n"
-                "- Use @knowledgebase to search the knowledge base\n"
-                "- /clear - Clear conversation history\n"
-                "- /help - Display this help message\n"
-                "- /info - Display system configuration\n"
-                "- /bye - Exit the chatbot\n"
-                "- /doc <number> - View detailed document content")
+        base_help = ("🤖 Welcome to RAG CLI Chatbot!\n\n"
+                    "Commands:\n"
+                    "- Type normally for general chat\n"
+                    "- Use @knowledgebase to search the knowledge base\n"
+                    "- /clear - Clear conversation history\n"
+                    "- /help - Display this help message\n"
+                    "- /info - Display system configuration\n"
+                    "- /bye - Exit the chatbot\n"
+                    "- /doc <number> - View detailed document content")
+        
+        # Add query pattern examples if hybrid search enabled
+        if self.use_hybrid_search:
+            query_examples = ("\n\nQuery Patterns:\n\n"
+                            "📋 Search Mode (document discovery):\n"
+                            "- 'search @knowledgebase on machine learning'\n"
+                            "- '@knowledgebase find papers by Smith from 2024'\n"
+                            "- 'get @knowledgebase articles about Python'\n\n"
+                            
+                            "🔍 Search + Action (find then analyze):\n"
+                            "- 'search @knowledgebase on AI, explain the key concepts'\n"
+                            "- '@knowledgebase find papers on neural networks and summarize'\n"
+                            "- 'get @knowledgebase docs on Python, what are the benefits'\n\n"
+                            
+                            "💬 Direct Questions (knowledge consultation):\n"
+                            "- '@knowledgebase what is machine learning'\n"
+                            "- '@knowledgebase explain the benefits of Python'\n"
+                            "- '@knowledgebase compare REST vs GraphQL APIs'\n\n"
+                            
+                            "🏷️ Filter Examples:\n"
+                            "- Author: 'papers by Smith', 'research by Dr. Johnson'\n"
+                            "- Date: 'from 2024', 'articles since 2023', 'before 2025'\n"
+                            "- Tags: 'about Python', 'tagged as AI', 'on neural networks'\n"
+                            "- Exclusions: 'not by Smith', 'without tag gemini', 'excluding robotics'")
+            base_help += query_examples
+        
+        return base_help
+
+
+    def _format_three_filter_display(self, query_analysis: Dict[str, Any]) -> str:
+        """Format three-filter display with clear type indicators."""
+        filter_parts = []
+        
+        # Hard filters (must match) - show with 🔒
+        hard_filters = query_analysis.get('hard_filters', {})
+        if hard_filters:
+            hard_parts = []
+            for key, value in hard_filters.items():
+                if value:
+                    hard_parts.append(self._format_single_filter(key, value))
+            if hard_parts:
+                filter_parts.append(f"🔒 {', '.join(hard_parts)}")
+        
+        # Negation filters (must not match) - show with 🚫  
+        negation_filters = query_analysis.get('negation_filters', {})
+        if negation_filters:
+            neg_parts = []
+            for key, value in negation_filters.items():
+                if value:
+                    neg_parts.append(f"NOT {self._format_single_filter(key, value)}")
+            if neg_parts:
+                filter_parts.append(f"🚫 {', '.join(neg_parts)}")
+        
+        # Soft filters (boost if match) - show with ⭐
+        soft_filters = query_analysis.get('soft_filters', {})
+        if soft_filters:
+            soft_parts = []
+            for key, value in soft_filters.items():
+                if value:
+                    soft_parts.append(self._format_single_filter(key, value))
+            if soft_parts:
+                filter_parts.append(f"⭐ {', '.join(soft_parts)}")
+        
+        return "; ".join(filter_parts)
+    
+    def _format_single_filter(self, key: str, value: Any) -> str:
+        """Format a single filter key-value pair."""
+        if key == "author":
+            return f"author: {value}"
+        elif key == "tags":
+            if isinstance(value, list):
+                tags_str = ", ".join(str(tag) for tag in value)
+                return f"tags: [{tags_str}]"
+            else:
+                return f"tags: {value}"
+        elif key == "publication_date":
+            if isinstance(value, dict):
+                # Handle date range objects
+                if "gte" in value and "lt" in value:
+                    start_date = value["gte"][:7] if len(value["gte"]) > 7 else value["gte"]
+                    end_date = value["lt"][:7] if len(value["lt"]) > 7 else value["lt"]
+                    return f"date: {start_date} to {end_date}"
+                elif "gte" in value:
+                    start_date = value["gte"][:7] if len(value["gte"]) > 7 else value["gte"]
+                    return f"date: from {start_date}"
+                elif "lt" in value:
+                    end_date = value["lt"][:7] if len(value["lt"]) > 7 else value["lt"]
+                    return f"date: before {end_date}"
+            else:
+                return f"date: {value}"
+        else:
+            return f"{key}: {value}"
 
     def _display_panel_message(self, message: str, title: str, border_style: str = "blue"):
         """Helper method to display a message within a rich.panel.Panel."""
@@ -162,7 +262,9 @@ class RAGCLI:
 
         # RAG settings
         retrieval_strategy = self.config_manager.get('rag.retrieval_strategy', 'rewrite')
+        hybrid_search_enabled = self.config_manager.get('rag.use_hybrid_search', False)
         table.add_row("RAG", "retrieval_strategy", retrieval_strategy)
+        table.add_row("", "hybrid_search", str(hybrid_search_enabled))
         table.add_row("", "top_k", str(self.config_manager.get('rag.top_k', 'N/A')))
         table.add_row("", "min_score", str(self.config_manager.get('rag.min_score', 'N/A')))
         
@@ -231,19 +333,30 @@ class RAGCLI:
         return {
             'search_rag': search_rag,
             'embedding_source_text': clean_query,
-            'llm_query': user_input
+            'llm_query': user_input,
+            'hard_filters': {},
+            'negation_filters': {},
+            'soft_filters': {}
         }
     
-    def _perform_rag_search(self, embedding_text: str) -> List[Any]:
-        """Perform RAG search using optimized embedding text and return results."""
+    def _perform_rag_search(self, embedding_text: str, query_analysis: Dict[str, Any]) -> List[Any]:
+        """Perform RAG search using SearchService with all filter types."""
         try:
             # Generate embedding for the optimized text
             query_embedding = self.embedding_client.get_embedding(embedding_text)
             
-            # Search in Qdrant
-            results = self.qdrant_db.search(
+            # Extract all filter types from query analysis
+            hard_filters = query_analysis.get('hard_filters', {})
+            negation_filters = query_analysis.get('negation_filters', {})
+            soft_filters = query_analysis.get('soft_filters', {})
+            
+            # Use SearchService unified search with all filter types
+            results = self.search_service.unified_search(
                 query_vector=query_embedding,
-                limit=self.top_k,
+                top_k=self.top_k,
+                hard_filters=hard_filters if self.use_hybrid_search else None,
+                negation_filters=negation_filters if self.use_hybrid_search else None,
+                soft_filters=soft_filters if self.use_hybrid_search else None,
                 score_threshold=self.min_score
             )
             
@@ -561,11 +674,21 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 use_rag = query_analysis['search_rag']
                 
                 if use_rag:
-                    # Perform RAG search with optimized embedding text
+                    # Perform RAG search with optimized embedding text and all filter types
                     embedding_text = query_analysis['embedding_source_text']
+                    
                     search_display = embedding_text[:DISPLAY_TEXT_TRUNCATE_LENGTH] + "..." if len(embedding_text) > DISPLAY_TEXT_TRUNCATE_LENGTH else embedding_text
-                    self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}'...[/dim]")
-                    rag_results = self._perform_rag_search(embedding_text)
+                    
+                    if self.use_hybrid_search:
+                        filter_info = self._format_three_filter_display(query_analysis)
+                        if filter_info:
+                            self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}' ({filter_info})...[/dim]")
+                        else:
+                            self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}'...[/dim]")
+                    else:
+                        self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}'...[/dim]")
+                    
+                    rag_results = self._perform_rag_search(embedding_text, query_analysis)
                     self.last_rag_results = rag_results
                     
                     if self._should_use_rag_context(rag_results):
