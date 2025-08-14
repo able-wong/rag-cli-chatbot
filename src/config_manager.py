@@ -104,3 +104,7 @@ class ConfigManager:
     def get_documents_config(self) -> Dict[str, Any]:
         """Get documents configuration."""
         return self.get('documents', {})
+    
+    def get_sparse_embedding_config(self) -> Dict[str, Any]:
+        """Get sparse embedding configuration."""
+        return self.get('sparse_embedding', {})

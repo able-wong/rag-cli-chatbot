@@ -149,6 +149,22 @@ rag:
     Never make up information that isn't in the provided context.
 
 # ============================================================================
+# SPARSE EMBEDDING CONFIGURATION (Optional - enables exact phrase matching)
+# ============================================================================
+# Sparse embeddings enable exact phrase and keyword matching alongside semantic similarity.
+# This is used for hybrid search strategies that combine dense and sparse vectors.
+# Uncomment this section to enable sparse vector support:
+
+sparse_embedding:
+  # PROVIDER SELECTION: Currently only "splade" supported
+  provider: "splade"  # Neural sparse retrieval provider
+  
+  # SPLADE SETTINGS (Neural sparse retrieval)
+  splade:
+    model: "naver/splade-cocondenser-ensembledistil"  # Pre-trained SPLADE model
+    device: "cpu"                                     # Options: "cpu", "cuda", "mps"
+
+# ============================================================================
 # SEARCH SERVICE CONFIGURATION (Soft Filtering)
 # ============================================================================
 search_service:
