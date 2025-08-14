@@ -26,6 +26,8 @@ MANIFEST
 *.manifest
 *.spec
 
+blogposts/
+
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
