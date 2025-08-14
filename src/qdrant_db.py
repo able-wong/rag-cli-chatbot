@@ -114,7 +114,7 @@ class QdrantDB:
             
             search_params = {
                 "collection_name": self.collection_name,
-                "query_vector": query_vector,
+                "query_vector": ("dense", query_vector),  # Use dense vector for semantic search
                 "limit": limit
             }
             
