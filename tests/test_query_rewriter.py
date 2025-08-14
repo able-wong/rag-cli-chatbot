@@ -62,23 +62,6 @@ def test_query_rewriter_initialization():
     assert rewriter.temperature == 0.1
     assert rewriter.max_tokens == 512
 
-def test_query_rewriter_hyde_initialization():
-    """Test QueryRewriter initialization with HyDE strategy."""
-    mock_llm = create_mock_llm_client()
-    config = {
-        'trigger_phrase': '@knowledgebase',
-        'retrieval_strategy': 'hyde',
-        'temperature': 0.1,
-        'max_tokens': 512
-    }
-    
-    rewriter = QueryRewriter(mock_llm, config)
-    
-    assert rewriter.llm_client == mock_llm
-    assert rewriter.trigger_phrase == '@knowledgebase'
-    assert rewriter.retrieval_strategy == 'hyde'
-    assert rewriter.temperature == 0.1
-    assert rewriter.max_tokens == 512
 
 def test_trigger_detection_in_transformation():
     """Test trigger phrase detection in query transformation."""
@@ -110,9 +93,6 @@ def test_trigger_detection_in_transformation():
     assert len(result['embedding_texts']['hyde']) == 3
     assert all('Python' in hyde_text for hyde_text in result['embedding_texts']['hyde'])
     assert result['llm_query'] == "What is Python programming language?"
-    # Check backward compatibility field is set
-    assert 'embedding_source_text' in result
-    assert 'Python' in result['embedding_source_text']
     # Check source field
     assert result['source'] == 'llm'
     mock_llm.get_json_response.assert_called_once()
@@ -204,15 +184,21 @@ def test_json_parsing_with_extra_text():
     # Mock JSON response (LLMClient handles text extraction internally)
     mock_response = {
         "search_rag": False,
-        "embedding_source_text": "cats behavior",
-        "llm_query": "Why do cats purr?"
+        "embedding_texts": {
+            "rewrite": "cats behavior",
+            "hyde": ["", "", ""]
+        },
+        "llm_query": "Why do cats purr?",
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query("Why do cats purr?")
     
     assert result['search_rag'] is False
-    assert result['embedding_source_text'] == "cats behavior"
+    assert result['embedding_texts']['rewrite'] == "cats behavior"
     assert result['llm_query'] == "Why do cats purr?"
 
 def test_malformed_json_fallback():
@@ -228,7 +214,7 @@ def test_malformed_json_fallback():
     
     # Should fall back to simple logic
     assert result['search_rag'] is True  # Trigger detected
-    assert result['embedding_source_text'] == "What is AI?"  # Trigger removed
+    assert result['embedding_texts']['rewrite'] == "What is AI?"  # Trigger removed
     assert result['llm_query'] == "@knowledgebase What is AI?"  # Original query
     assert result['source'] == 'fallback'  # Should indicate fallback source
 
@@ -250,7 +236,7 @@ def test_missing_fields_fallback():
     
     # Should use fallback
     assert result['search_rag'] is True
-    assert result['embedding_source_text'] == "Test query"
+    assert result['embedding_texts']['rewrite'] == "Test query"
     assert result['llm_query'] == "@knowledgebase Test query"
     assert result['source'] == 'fallback'
 
@@ -263,8 +249,14 @@ def test_trigger_detection_mismatch_correction():
     # Mock response where LLM incorrectly says no trigger when there is one
     mock_response = {
         "search_rag": False,  # LLM says no trigger
-        "embedding_source_text": "artificial intelligence",
-        "llm_query": "What is artificial intelligence?"
+        "embedding_texts": {
+            "rewrite": "artificial intelligence",
+            "hyde": ["AI doc 1", "AI doc 2", "AI doc 3"]
+        },
+        "llm_query": "What is artificial intelligence?",
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
@@ -272,7 +264,7 @@ def test_trigger_detection_mismatch_correction():
     
     # Should correct the search_rag field
     assert result['search_rag'] is True  # Corrected to True
-    assert result['embedding_source_text'] == "artificial intelligence"
+    assert result['embedding_texts']['rewrite'] == "artificial intelligence"
     assert result['llm_query'] == "What is artificial intelligence?"
 
 def test_case_insensitive_trigger_detection():
@@ -284,7 +276,13 @@ def test_case_insensitive_trigger_detection():
     # Mock response
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "database design",
+        "embedding_texts": {
+            "rewrite": "database design",
+            "hyde": ["Database design doc 1", "Database design doc 2", "Database design doc 3"]
+        },
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {},
         "llm_query": "How to design databases?"
     }
     mock_llm.get_json_response.return_value = mock_response
@@ -306,19 +304,25 @@ def test_empty_or_invalid_string_fields():
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
     
-    # Mock response with empty embedding_source_text
+    # Mock response with empty embedding_texts
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "",  # Empty string
+        "embedding_texts": {
+            "rewrite": "",
+            "hyde": ["", "", ""]
+        },
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {},  # Empty string
         "llm_query": "Valid query"
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query("@knowledgebase Test")
     
-    # Should use fallback due to empty embedding_source_text
+    # Should use fallback due to empty embedding_texts
     assert result['search_rag'] is True
-    assert result['embedding_source_text'] == "Test"  # Fallback value
+    assert result['embedding_texts']['rewrite'] == "Test"  # Fallback value
     assert result['llm_query'] == "@knowledgebase Test"
 
 def test_non_boolean_search_rag_conversion():
@@ -340,7 +344,13 @@ def test_non_boolean_search_rag_conversion():
     for string_val, expected_bool in test_cases:
         mock_response = {
             "search_rag": string_val,
-            "embedding_source_text": "test content",
+            "embedding_texts": {
+                "rewrite": "test content",
+                "hyde": ["Test doc 1", "Test doc 2", "Test doc 3"]
+            },
+            "hard_filters": {},
+            "negation_filters": {},
+            "soft_filters": {},
             "llm_query": "test query"
         }
         mock_llm.get_json_response.return_value = mock_response
@@ -363,7 +373,7 @@ def test_llm_exception_handling():
     
     # Should use fallback
     assert result['search_rag'] is True
-    assert result['embedding_source_text'] == "What is Python?"
+    assert result['embedding_texts']['rewrite'] == "What is Python?"
     assert result['llm_query'] == "@knowledgebase What is Python?"
 
 def test_connection_test_success():
@@ -375,7 +385,10 @@ def test_connection_test_success():
     # Mock successful response with all required filter fields
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "artificial intelligence",
+        "embedding_texts": {
+            "rewrite": "artificial intelligence",
+            "hyde": ["AI doc 1", "AI doc 2", "AI doc 3"]
+        },
         "llm_query": "What is artificial intelligence?",
         "hard_filters": {},
         "negation_filters": {},
@@ -411,7 +424,13 @@ def test_custom_trigger_phrase():
     
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "custom search query",
+        "embedding_texts": {
+            "rewrite": "custom search query",
+            "hyde": ["Custom doc 1", "Custom doc 2", "Custom doc 3"]
+        },
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {},
         "llm_query": "Custom search query"
     }
     mock_llm.get_json_response.return_value = mock_response
@@ -438,7 +457,7 @@ def test_query_cleaning_in_fallback():
     
     # Should clean the trigger phrase and whitespace
     assert result['search_rag'] is True
-    assert result['embedding_source_text'] == "What is machine learning?"
+    assert result['embedding_texts']['rewrite'] == "What is machine learning?"
     assert result['llm_query'] == "@knowledgebase    What is machine learning?   "
     assert result['source'] == 'fallback'
 
@@ -456,14 +475,14 @@ def test_empty_query_after_trigger_fallback():
     
     # Should detect trigger but not trigger RAG search due to empty content
     assert result['search_rag'] is False  # Should not trigger RAG with empty content
-    assert result['embedding_source_text'] == ""  # Empty after cleaning
+    assert result['embedding_texts']['rewrite'] == ""  # Empty after cleaning
     assert result['llm_query'] == "@knowledgebase"  # Original query preserved
     
     # Test with trigger phrase and whitespace only
     result = rewriter.transform_query("@knowledgebase   ")
     
     assert result['search_rag'] is False  # Should not trigger RAG with empty content
-    assert result['embedding_source_text'] == ""  # Empty after cleaning and stripping
+    assert result['embedding_texts']['rewrite'] == ""  # Empty after cleaning and stripping
     assert result['llm_query'] == "@knowledgebase   "  # Original query preserved
 
 def test_conversational_follow_up_detection():
@@ -475,7 +494,13 @@ def test_conversational_follow_up_detection():
     # Mock response for conversational follow-up
     mock_response = {
         "search_rag": False,
-        "embedding_source_text": "",
+        "embedding_texts": {
+            "rewrite": "",
+            "hyde": ["", "", ""]
+        },
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {},
         "llm_query": "Tell me more about the automation benefits based on context in previous conversation."
     }
     mock_llm.get_json_response.return_value = mock_response
@@ -483,7 +508,7 @@ def test_conversational_follow_up_detection():
     result = rewriter.transform_query("Tell me more about the automation benefits")
     
     assert result['search_rag'] is False
-    assert result['embedding_source_text'] == ""
+    assert result['embedding_texts']['rewrite'] == ""
     assert "based on context in previous conversation" in result['llm_query']
 
 def test_referential_query_detection():
@@ -502,7 +527,13 @@ def test_referential_query_detection():
     for query, expected_context_ref in test_cases:
         mock_response = {
             "search_rag": False,
-            "embedding_source_text": "",
+            "embedding_texts": {
+            "rewrite": "",
+            "hyde": ["", "", ""]
+        },
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {},
             "llm_query": expected_context_ref.capitalize() + "."
         }
         mock_llm.get_json_response.return_value = mock_response
@@ -521,7 +552,13 @@ def test_general_question_no_context_reference():
     # Mock response for general question
     mock_response = {
         "search_rag": False,
-        "embedding_source_text": "",
+        "embedding_texts": {
+            "rewrite": "",
+            "hyde": ["", "", ""]
+        },
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {},
         "llm_query": "What is the capital of France?"
     }
     mock_llm.get_json_response.return_value = mock_response
@@ -529,7 +566,7 @@ def test_general_question_no_context_reference():
     result = rewriter.transform_query("What is the capital of France?")
     
     assert result['search_rag'] is False
-    assert result['embedding_source_text'] == ""
+    assert result['embedding_texts']['rewrite'] == ""
     assert "context" not in result['llm_query']
 
 def test_rag_query_still_uses_provided_context():
@@ -541,48 +578,48 @@ def test_rag_query_still_uses_provided_context():
     # Mock response for RAG query
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "machine learning benefits applications",
-        "llm_query": "Explain machine learning benefits based on the provided context."
+        "embedding_texts": {
+            "rewrite": "machine learning benefits applications",
+            "hyde": ["ML doc 1", "ML doc 2", "ML doc 3"]
+        },
+        "llm_query": "Explain machine learning benefits based on the provided context.",
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query("@knowledgebase What are the benefits of machine learning?")
     
     assert result['search_rag'] is True
-    assert len(result['embedding_source_text']) > 0
+    assert len(result['embedding_texts']['rewrite']) > 0
     assert "based on the provided context" in result['llm_query']
 
 # ============================================================================
 # HyDE Strategy Tests
 # ============================================================================
 
-def test_hyde_strategy_system_prompt_selection():
-    """Test that HyDE strategy uses the correct system prompt."""
+def test_unified_system_prompt_contains_both_strategies():
+    """Test that unified system prompt contains instructions for both rewrite and hyde."""
     mock_llm = create_mock_llm_client()
-    config = {
-        'trigger_phrase': '@knowledgebase',
-        'retrieval_strategy': 'hyde'
-    }
     
-    rewriter = QueryRewriter(mock_llm, config)
+    # Test that both strategies use the same unified prompt
+    rewrite_config = {'trigger_phrase': '@knowledgebase', 'retrieval_strategy': 'rewrite'}
+    hyde_config = {'trigger_phrase': '@knowledgebase', 'retrieval_strategy': 'hyde'}
     
-    # Check that the system prompt contains HyDE-specific instructions
-    assert "HyDE (Hypothetical Document Embeddings)" in rewriter.system_prompt
-    assert "hypothetical document" in rewriter.system_prompt
-
-def test_rewrite_strategy_system_prompt_selection():
-    """Test that rewrite strategy uses the correct system prompt."""
-    mock_llm = create_mock_llm_client()
-    config = {
-        'trigger_phrase': '@knowledgebase',
-        'retrieval_strategy': 'rewrite'
-    }
+    rewrite_rewriter = QueryRewriter(mock_llm, rewrite_config)
+    hyde_rewriter = QueryRewriter(mock_llm, hyde_config)
     
-    rewriter = QueryRewriter(mock_llm, config)
+    # Both should have the same system prompt
+    assert rewrite_rewriter.system_prompt == hyde_rewriter.system_prompt
     
-    # Check that the system prompt contains rewrite-specific instructions
-    assert "Core topic keywords only, ignoring instruction words" in rewriter.system_prompt
-    assert "HyDE" not in rewriter.system_prompt
+    # Unified prompt should contain instructions for both strategies
+    prompt = rewrite_rewriter.system_prompt
+    assert "embedding_texts" in prompt
+    assert "rewrite" in prompt.lower()
+    assert "hyde" in prompt.lower()
+    assert "hypothetical document" in prompt.lower()
+    assert "extract core topic keywords" in prompt.lower()
 
 def test_hyde_strategy_hypothetical_document_generation():
     """Test HyDE strategy generates hypothetical documents."""
@@ -593,155 +630,66 @@ def test_hyde_strategy_hypothetical_document_generation():
     }
     rewriter = QueryRewriter(mock_llm, config)
     
-    # Mock HyDE response with hypothetical document
+    # Mock HyDE response with hypothetical documents
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "Neural networks are computational models inspired by biological neural networks. They consist of interconnected nodes called neurons that process information through weighted connections. During training, networks learn by adjusting these weights through backpropagation, a process that calculates errors and propagates them backward through the network to optimize performance.",
-        "llm_query": "Explain how neural networks work based on the provided context."
-    }
-    mock_llm.get_json_response.return_value = mock_response
-    
-    result = rewriter.transform_query("@knowledgebase How do neural networks work?")
-    
-    assert result['search_rag'] is True
-    # HyDE should generate a comprehensive hypothetical document
-    assert len(result['embedding_source_text']) > 50  # Much longer than keywords
-    assert "neural networks" in result['embedding_source_text'].lower()
-    assert "training" in result['embedding_source_text'].lower()
-    assert "based on the provided context" in result['llm_query']
-
-def test_hyde_vs_rewrite_embedding_text_difference():
-    """Test that HyDE and rewrite strategies produce different embedding text."""
-    mock_llm = create_mock_llm_client()
-    
-    # Test rewrite strategy
-    rewrite_config = {
-        'trigger_phrase': '@knowledgebase',
-        'retrieval_strategy': 'rewrite'
-    }
-    rewrite_rewriter = QueryRewriter(mock_llm, rewrite_config)
-    
-    rewrite_response = {
-        "search_rag": True,
-        "embedding_source_text": "machine learning algorithms applications",  # Keywords
-        "llm_query": "Explain machine learning based on the provided context."
-    }
-    mock_llm.get_json_response.return_value = rewrite_response
-    
-    rewrite_result = rewrite_rewriter.transform_query("@knowledgebase What is machine learning?")
-    
-    # Test HyDE strategy
-    hyde_config = {
-        'trigger_phrase': '@knowledgebase',
-        'retrieval_strategy': 'hyde'
-    }
-    hyde_rewriter = QueryRewriter(mock_llm, hyde_config)
-    
-    hyde_response = {
-        "search_rag": True,
-        "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It uses algorithms to identify patterns in data and make predictions or classifications on new, unseen data.",  # Hypothetical document
-        "llm_query": "Explain machine learning based on the provided context."
-    }
-    mock_llm.get_json_response.return_value = hyde_response
-    
-    hyde_result = hyde_rewriter.transform_query("@knowledgebase What is machine learning?")
-    
-    # Compare results
-    assert rewrite_result['search_rag'] is True
-    assert hyde_result['search_rag'] is True
-    
-    # HyDE should produce much longer, more descriptive text
-    assert len(hyde_result['embedding_source_text']) > len(rewrite_result['embedding_source_text'])
-    assert len(hyde_result['embedding_source_text']) > 100  # Should be document-like
-    assert len(rewrite_result['embedding_source_text']) < 50  # Should be keyword-like
-
-def test_hyde_strategy_non_rag_queries():
-    """Test that HyDE strategy handles non-RAG queries correctly."""
-    mock_llm = create_mock_llm_client()
-    config = {
-        'trigger_phrase': '@knowledgebase',
-        'retrieval_strategy': 'hyde'
-    }
-    rewriter = QueryRewriter(mock_llm, config)
-    
-    # Mock response for non-RAG query
-    mock_response = {
-        "search_rag": False,
-        "embedding_source_text": "",
-        "llm_query": "What is the weather today?"
-    }
-    mock_llm.get_json_response.return_value = mock_response
-    
-    result = rewriter.transform_query("What is the weather today?")
-    
-    assert result['search_rag'] is False
-    assert result['embedding_source_text'] == ""
-    assert result['llm_query'] == "What is the weather today?"
-
-def test_hyde_strategy_conversational_queries():
-    """Test that HyDE strategy handles conversational follow-ups correctly."""
-    mock_llm = create_mock_llm_client()
-    config = {
-        'trigger_phrase': '@knowledgebase',
-        'retrieval_strategy': 'hyde'
-    }
-    rewriter = QueryRewriter(mock_llm, config)
-    
-    # Mock response for conversational follow-up
-    mock_response = {
-        "search_rag": False,
-        "embedding_source_text": "",
-        "llm_query": "Tell me more about that approach based on context in previous conversation."
-    }
-    mock_llm.get_json_response.return_value = mock_response
-    
-    result = rewriter.transform_query("Tell me more about that approach")
-    
-    assert result['search_rag'] is False
-    assert result['embedding_source_text'] == ""
-    assert "based on context in previous conversation" in result['llm_query']
-
-def test_hyde_strategy_fallback_behavior():
-    """Test that HyDE strategy fallback works correctly."""
-    mock_llm = create_mock_llm_client()
-    config = {
-        'trigger_phrase': '@knowledgebase',
-        'retrieval_strategy': 'hyde'
-    }
-    rewriter = QueryRewriter(mock_llm, config)
-    
-    # Mock LLM exception to trigger fallback
-    mock_llm.get_json_response.side_effect = Exception("LLM service unavailable")
-    
-    result = rewriter.transform_query("@knowledgebase What is Python?")
-    
-    # Should use fallback logic (same for both strategies)
-    assert result['search_rag'] is True
-    assert result['embedding_source_text'] == "What is Python?"
-    assert result['llm_query'] == "@knowledgebase What is Python?"
-
-def test_hyde_strategy_connection_test():
-    """Test connection test works with HyDE strategy."""
-    mock_llm = create_mock_llm_client()
-    config = {
-        'trigger_phrase': '@knowledgebase',
-        'retrieval_strategy': 'hyde'
-    }
-    rewriter = QueryRewriter(mock_llm, config)
-    
-    # Mock successful response with all required filter fields
-    mock_response = {
-        "search_rag": True,
-        "embedding_source_text": "Artificial intelligence is the simulation of human intelligence in machines that are programmed to think and learn like humans. It encompasses various subfields including machine learning, natural language processing, and computer vision.",
-        "llm_query": "What is artificial intelligence based on the provided context?",
+        "embedding_texts": {
+            "rewrite": "neural networks training",
+            "hyde": [
+                "Neural networks are computational models inspired by biological neural networks that process information through weighted connections.",
+                "During training, networks learn by adjusting weights through backpropagation to optimize performance.",
+                "Neural networks consist of interconnected nodes called neurons that calculate errors and propagate them backward through the network."
+            ]
+        },
+        "llm_query": "Explain how neural networks work based on the provided context.",
         "hard_filters": {},
         "negation_filters": {},
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
-    success = rewriter.test_connection()
-    assert success is True
+    result = rewriter.transform_query("@knowledgebase How do neural networks work?")
+    
+    assert result['search_rag'] is True
+    # Rewrite should contain keywords
+    assert len(result['embedding_texts']['rewrite']) < 50  # Keywords are shorter
+    assert "neural networks" in result['embedding_texts']['rewrite'].lower()
+    # HyDE should contain hypothetical documents
+    assert len(result['embedding_texts']['hyde']) == 3
+    assert len(result['embedding_texts']['hyde'][0]) > 50  # First hyde doc should be longer
+    assert "neural networks" in result['embedding_texts']['hyde'][0].lower()
+    assert "based on the provided context" in result['llm_query']
+
+def test_embedding_texts_structure_consistency():
+    """Test that all strategies return consistent embedding_texts structure."""
+    mock_llm = create_mock_llm_client()
+    
+    # Test with different strategies
+    for strategy in ['rewrite', 'hyde']:
+        config = {'trigger_phrase': '@knowledgebase', 'retrieval_strategy': strategy}
+        rewriter = QueryRewriter(mock_llm, config)
+        
+        mock_response = create_mock_response(
+            search_rag=True,
+            rewrite_text="machine learning",
+            hyde_texts=["ML doc 1", "ML doc 2", "ML doc 3"],
+            llm_query="Test query"
+        )
+        mock_llm.get_json_response.return_value = mock_response
+        
+        result = rewriter.transform_query("@knowledgebase What is machine learning?")
+        
+        # All strategies should return the same structure
+        assert result['search_rag'] is True
+        assert 'embedding_texts' in result
+        assert 'rewrite' in result['embedding_texts']
+        assert 'hyde' in result['embedding_texts']
+        assert isinstance(result['embedding_texts']['hyde'], list)
+        assert len(result['embedding_texts']['hyde']) >= 1
+
+
+
+
 
 # ============================================================================
 # Hybrid Search / Metadata Filtering Tests
@@ -756,7 +704,13 @@ def test_filters_field_initialization():
     # Mock response without hard_hard_filters field
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "Python programming",
+        "embedding_texts": {
+            "rewrite": "Python programming",
+            "hyde": ["Python doc 1", "Python doc 2", "Python doc 3"]
+        },
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {},
         "llm_query": "Explain Python programming based on the provided context."
     }
     mock_llm.get_json_response.return_value = mock_response
@@ -784,9 +738,14 @@ def test_author_filter_extraction():
     for query, expected_filters in test_cases:
         mock_response = {
             "search_rag": True,
-            "embedding_source_text": "research topic",
+            "embedding_texts": {
+                "rewrite": "research topic",
+                "hyde": ["Research doc 1", "Research doc 2", "Research doc 3"]
+            },
             "llm_query": "Based on the provided context, provide information about the research.",
-            "hard_filters": expected_filters
+            "hard_filters": expected_filters,
+            "negation_filters": {},
+            "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
         
@@ -813,9 +772,14 @@ def test_publication_date_filter_extraction():
     for query, expected_filters in test_cases:
         mock_response = {
             "search_rag": True,
-            "embedding_source_text": "research topic",
+            "embedding_texts": {
+                "rewrite": "research topic",
+                "hyde": ["Research doc 1", "Research doc 2", "Research doc 3"]
+            },
             "llm_query": "Based on the provided context, provide information about the research.",
-            "hard_filters": expected_filters
+            "hard_filters": expected_filters,
+            "negation_filters": {},
+            "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
         
@@ -841,9 +805,14 @@ def test_explicit_tag_syntax_single_tag():
     for query, expected_filters in test_cases:
         mock_response = {
             "search_rag": True,
-            "embedding_source_text": "research topic",
+            "embedding_texts": {
+                "rewrite": "research topic",
+                "hyde": ["Research doc 1", "Research doc 2", "Research doc 3"]
+            },
             "llm_query": "Based on the provided context, provide information about the research.",
-            "hard_filters": expected_filters
+            "hard_filters": expected_filters,
+            "negation_filters": {},
+            "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
         
@@ -868,9 +837,14 @@ def test_explicit_tag_syntax_multiple_tags():
     for query, expected_filters in test_cases:
         mock_response = {
             "search_rag": True,
-            "embedding_source_text": "research topic",
+            "embedding_texts": {
+                "rewrite": "research topic",
+                "hyde": ["Research doc 1", "Research doc 2", "Research doc 3"]
+            },
             "llm_query": "Based on the provided context, provide information about the research.",
-            "hard_filters": expected_filters
+            "hard_filters": expected_filters,
+            "negation_filters": {},
+            "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
         
@@ -898,9 +872,14 @@ def test_no_auto_tag_extraction():
     for query, expected_filters in test_cases:
         mock_response = {
             "search_rag": True,
-            "embedding_source_text": "research topic",
+            "embedding_texts": {
+                "rewrite": "research topic",
+                "hyde": ["Research doc 1", "Research doc 2", "Research doc 3"]
+            },
             "llm_query": "Based on the provided context, provide information about the research.",
-            "hard_filters": expected_filters
+            "hard_filters": expected_filters,
+            "negation_filters": {},
+            "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
         
@@ -930,9 +909,14 @@ def test_mixed_explicit_and_auto_filters():
     for query, expected_filters in test_cases:
         mock_response = {
             "search_rag": True,
-            "embedding_source_text": "research topic",
+            "embedding_texts": {
+                "rewrite": "research topic",
+                "hyde": ["Research doc 1", "Research doc 2", "Research doc 3"]
+            },
             "llm_query": "Based on the provided context, provide information about the research.",
-            "hard_filters": expected_filters
+            "hard_filters": expected_filters,
+            "negation_filters": {},
+            "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
         
@@ -957,9 +941,14 @@ def test_combined_filters_extraction():
     
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "artificial intelligence research",
+        "embedding_texts": {
+            "rewrite": "artificial intelligence research",
+            "hyde": ["AI research doc 1", "AI research doc 2", "AI research doc 3"]
+        },
         "llm_query": "Based on the provided context, provide information about Smith's AI research from 2023.",
-        "hard_filters": expected_filters
+        "hard_filters": expected_filters,
+        "negation_filters": {},
+        "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
@@ -986,9 +975,14 @@ def test_complex_natural_language_query():
     
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "vibe coding programming approach",
+        "embedding_texts": {
+            "rewrite": "vibe coding programming approach",
+            "hyde": ["Vibe coding doc 1", "Vibe coding doc 2", "Vibe coding doc 3"]
+        },
         "llm_query": "Based on the provided context, explain what vibe coding is, including its pros and cons, and cite sources.",
-        "hard_filters": expected_filters
+        "hard_filters": expected_filters,
+        "negation_filters": {},
+        "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
@@ -1009,9 +1003,14 @@ def test_filters_field_validation():
     # Test with invalid filters type (not a dict)
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "test content",
+        "embedding_texts": {
+            "rewrite": "test content",
+            "hyde": ["Test doc 1", "Test doc 2", "Test doc 3"]
+        },
         "llm_query": "test query",
-        "hard_filters": "invalid_string"  # Should be dict
+        "hard_filters": "invalid_string",  # Should be dict
+        "negation_filters": {},
+        "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
@@ -1020,34 +1019,6 @@ def test_filters_field_validation():
     # Should reset to empty dict
     assert result['hard_filters'] == {}
 
-def test_filters_with_hyde_strategy():
-    """Test that filters work correctly with HyDE strategy."""
-    mock_llm = create_mock_llm_client()
-    config = {
-        'trigger_phrase': '@knowledgebase',
-        'retrieval_strategy': 'hyde'
-    }
-    rewriter = QueryRewriter(mock_llm, config)
-    
-    query = "@knowledgebase papers by John Smith about machine learning"
-    expected_filters = {
-        "author": "John Smith",
-        "tags": ["machine learning"]
-    }
-    
-    mock_response = {
-        "search_rag": True,
-        "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience.",
-        "llm_query": "Based on the provided context, provide information about machine learning from John Smith's papers.",
-        "hard_filters": expected_filters
-    }
-    mock_llm.get_json_response.return_value = mock_response
-    
-    result = rewriter.transform_query(query)
-    
-    assert result['search_rag'] is True
-    assert result['hard_filters'] == expected_filters
-    assert len(result['embedding_source_text']) > 100  # HyDE should generate longer text
 
 def test_no_filters_for_non_rag_queries():
     """Test that non-RAG queries still get empty filters."""
@@ -1057,9 +1028,14 @@ def test_no_filters_for_non_rag_queries():
     
     mock_response = {
         "search_rag": False,
-        "embedding_source_text": "",
-        "llm_query": "What is the weather today?",
-        "hard_filters": {}
+        "embedding_texts": {
+            "rewrite": "",
+            "hyde": ["", "", ""]
+        },
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {},
+        "llm_query": "What is the weather today?"
     }
     mock_llm.get_json_response.return_value = mock_response
     
@@ -1081,7 +1057,7 @@ def test_filters_fallback_behavior():
     
     # Should use fallback and include empty filters
     assert result['search_rag'] is True
-    assert result['embedding_source_text'] == "What is Python?"
+    assert result['embedding_texts']['rewrite'] == "What is Python?"
     assert result['llm_query'] == "@knowledgebase What is Python?"
     assert 'hard_filters' in result
     assert result['hard_filters'] == {}
@@ -1095,9 +1071,14 @@ def test_empty_filters_handling():
     # Test with null filters
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "test content",
+        "embedding_texts": {
+            "rewrite": "test content",
+            "hyde": ["Test doc 1", "Test doc 2", "Test doc 3"]
+        },
         "llm_query": "test query",
-        "hard_filters": None
+        "hard_filters": None,
+        "negation_filters": {},
+        "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
@@ -1118,9 +1099,14 @@ def test_partial_filters_extraction():
     
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "latest research papers",
+        "embedding_texts": {
+            "rewrite": "latest research papers",
+            "hyde": ["Research doc 1", "Research doc 2", "Research doc 3"]
+        },
         "llm_query": "Based on the provided context, provide information about Dr. Johnson's latest papers.",
-        "hard_filters": expected_filters
+        "hard_filters": expected_filters,
+        "negation_filters": {},
+        "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
@@ -1139,9 +1125,14 @@ def test_filters_with_conversational_queries():
     
     mock_response = {
         "search_rag": False,
-        "embedding_source_text": "",
-        "llm_query": "Tell me more about those techniques based on context in previous conversation.",
-        "hard_filters": {}
+        "embedding_texts": {
+            "rewrite": "",
+            "hyde": ["", "", ""]
+        },
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {},
+        "llm_query": "Tell me more about those techniques based on context in previous conversation."
     }
     mock_llm.get_json_response.return_value = mock_response
     
@@ -1160,7 +1151,10 @@ def test_filters_in_connection_test():
     # Mock successful response with all filter types
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "artificial intelligence",
+        "embedding_texts": {
+            "rewrite": "artificial intelligence",
+            "hyde": ["AI doc 1", "AI doc 2", "AI doc 3"]
+        },
         "llm_query": "What is artificial intelligence?",
         "hard_filters": {"tags": ["ai"]},
         "negation_filters": {},
@@ -1171,18 +1165,22 @@ def test_filters_in_connection_test():
     success = rewriter.test_connection()
     assert success is True
     
-    # Test that connection test requires all filter fields
-    mock_response_partial_filters = {
+    # Test that connection test fails when embedding_texts structure is invalid
+    mock_response_invalid_structure = {
         "search_rag": True,
-        "embedding_source_text": "artificial intelligence",
+        "embedding_texts": {
+            "rewrite": "",  # Empty rewrite should cause fallback
+            "hyde": ["", "", ""]  # Empty hyde should cause fallback
+        },
         "llm_query": "What is artificial intelligence?",
-        "hard_filters": {}
-        # Missing negation_filters and soft_filters
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {}
     }
-    mock_llm.get_json_response.return_value = mock_response_partial_filters
+    mock_llm.get_json_response.return_value = mock_response_invalid_structure
     
     success = rewriter.test_connection()
-    assert success is False  # Should fail because missing required fields
+    assert success is False  # Should fail because falls back to fallback (source != 'llm')
 
 # ============================================================================
 # NEW FILTER CLASSIFICATION TESTS
@@ -1206,7 +1204,10 @@ def test_strict_hard_filter_keywords():
     for query, expected_hard_filters in hard_filter_cases:
         mock_response = {
             "search_rag": True,
-            "embedding_source_text": "test content",
+            "embedding_texts": {
+                "rewrite": "test content",
+                "hyde": ["Test doc 1", "Test doc 2", "Test doc 3"]
+            },
             "llm_query": "test query",
             "hard_filters": expected_hard_filters,
             "negation_filters": {},
@@ -1241,7 +1242,10 @@ def test_negation_filter_keywords():
     for query, expected_negation_filters in negation_filter_cases:
         mock_response = {
             "search_rag": True,
-            "embedding_source_text": "test content",
+            "embedding_texts": {
+                "rewrite": "test content",
+                "hyde": ["Test doc 1", "Test doc 2", "Test doc 3"]
+            },
             "llm_query": "test query",
             "hard_filters": {},
             "negation_filters": expected_negation_filters,
@@ -1275,7 +1279,10 @@ def test_default_soft_filter_behavior():
     for query, expected_soft_filters in soft_filter_cases:
         mock_response = {
             "search_rag": True,
-            "embedding_source_text": "test content",
+            "embedding_texts": {
+                "rewrite": "test content",
+                "hyde": ["Test doc 1", "Test doc 2", "Test doc 3"]
+            },
             "llm_query": "test query",
             "hard_filters": {},
             "negation_filters": {},
@@ -1302,7 +1309,10 @@ def test_user_example_query_classification():
     
     expected_response = {
         "search_rag": True,
-        "embedding_source_text": "vibe coding programming approach",
+        "embedding_texts": {
+            "rewrite": "vibe coding programming approach",
+            "hyde": ["Vibe coding doc 1", "Vibe coding doc 2", "Vibe coding doc 3"]
+        },
         "llm_query": "Based on the provided context, explain what vibe coding is from papers published only in 2025, excluding John Wong's work, focusing on gemini-tagged content.",
         "hard_filters": {"publication_date": {"gte": "2025-01-01", "lt": "2026-01-01"}},
         "negation_filters": {"author": "John Wong"},
@@ -1357,7 +1367,10 @@ def test_combined_filter_extraction():
     for case in combined_cases:
         mock_response = {
             "search_rag": True,
-            "embedding_source_text": "test content",
+            "embedding_texts": {
+                "rewrite": "test content",
+                "hyde": ["Test doc 1", "Test doc 2", "Test doc 3"]
+            },
             "llm_query": "test query",
             "hard_filters": case["expected"]["hard_filters"],
             "negation_filters": case["expected"]["negation_filters"],
@@ -1382,7 +1395,13 @@ def test_filter_validation_and_fallback():
     # Test with missing filter fields (should be added by validation)
     incomplete_response = {
         "search_rag": True,
-        "embedding_source_text": "test content",
+        "embedding_texts": {
+            "rewrite": "test content",
+            "hyde": ["Test doc 1", "Test doc 2", "Test doc 3"]
+        },
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {},
         "llm_query": "test query"
         # Missing all filter fields
     }
@@ -1401,7 +1420,10 @@ def test_filter_validation_and_fallback():
     # Test with invalid filter field types
     invalid_response = {
         "search_rag": True,
-        "embedding_source_text": "test content",
+        "embedding_texts": {
+            "rewrite": "test content",
+            "hyde": ["Test doc 1", "Test doc 2", "Test doc 3"]
+        },
         "llm_query": "test query",
         "hard_filters": "invalid_string",
         "negation_filters": ["invalid", "list"],
@@ -1430,7 +1452,7 @@ def test_fallback_includes_all_filter_types():
     
     # Should use fallback and include all filter types
     assert result['search_rag'] is True
-    assert result['embedding_source_text'] == "What is Python?"
+    assert result['embedding_texts']['rewrite'] == "What is Python?"
     assert result['llm_query'] == "@knowledgebase What is Python?"
     assert 'hard_filters' in result
     assert 'negation_filters' in result
@@ -1474,7 +1496,10 @@ def test_edge_case_filter_combinations():
             mock_llm.get_json_response.side_effect = None
             mock_response = {
                 "search_rag": case["expected_search_rag"],
-                "embedding_source_text": "test content" if case["expected_search_rag"] else "",
+                "embedding_texts": {
+                    "rewrite": "test content" if case["expected_search_rag"] else "",
+                    "hyde": ["Test doc 1", "Test doc 2", "Test doc 3"] if case["expected_search_rag"] else ["", "", ""]
+                },
                 "llm_query": "test query",
                 "hard_filters": case.get("expected_hard_filters", {}),
                 "negation_filters": {},
@@ -1510,11 +1535,14 @@ def test_non_rag_queries_have_empty_filters():
     for query in non_rag_cases:
         mock_response = {
             "search_rag": False,
-            "embedding_source_text": "",
-            "llm_query": "test response",
-            "hard_filters": {},
-            "negation_filters": {},
-            "soft_filters": {}
+            "embedding_texts": {
+            "rewrite": "",
+            "hyde": ["", "", ""]
+        },
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {},
+            "llm_query": "test response"
         }
         mock_llm.get_json_response.return_value = mock_response
         
@@ -1544,7 +1572,10 @@ def test_search_only_query_detection():
     for query in search_only_queries:
         mock_response = {
             "search_rag": True,
-            "embedding_source_text": "test content",
+            "embedding_texts": {
+                "rewrite": "test content",
+                "hyde": ["Test doc 1", "Test doc 2", "Test doc 3"]
+            },
             "llm_query": "SEARCH_SUMMARY_MODE",
             "hard_filters": {},
             "negation_filters": {},
@@ -1577,11 +1608,14 @@ def test_question_queries_not_search_only():
     for query in question_queries:
         mock_response = {
             "search_rag": True,
-            "embedding_source_text": "test content",
-            "llm_query": "Based on the provided context, explain the topic.",
+            "embedding_texts": {
+                "rewrite": "test content",
+                "hyde": ["Test doc 1", "Test doc 2", "Test doc 3"]
+            },
             "hard_filters": {},
             "negation_filters": {},
-            "soft_filters": {}
+            "soft_filters": {},
+            "llm_query": "Based on the provided context, explain the topic."
         }
         mock_llm.get_json_response.return_value = mock_response
         
