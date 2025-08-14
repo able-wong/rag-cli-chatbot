@@ -165,19 +165,22 @@ class TestQueryRewriterMultiPersonaHyde:
         assert isinstance(embedding_texts['hyde'], list)
         assert len(embedding_texts['hyde']) == 3
 
-    def test_backward_compatibility_fields(self, query_rewriter):
-        """Test that backward compatibility fields are present."""
+    def test_unified_embedding_structure(self, query_rewriter):
+        """Test that the unified embedding structure works correctly."""
         query = "@knowledgebase explain REST vs GraphQL APIs"
         result = query_rewriter.transform_query(query)
         
         self.assert_llm_response_structure(result, query)
         
-        # Check backward compatibility
-        assert 'embedding_source_text' in result, "Should maintain embedding_source_text for backward compatibility"
+        # Check unified structure
+        assert 'embedding_texts' in result, "Should have embedding_texts structure"
+        assert 'rewrite' in result['embedding_texts'], "Should have rewrite text"
+        assert 'hyde' in result['embedding_texts'], "Should have hyde texts"
         
-        # For rewrite strategy, embedding_source_text should match rewrite text
-        assert result['embedding_source_text'] == result['embedding_texts']['rewrite'], \
-            "embedding_source_text should match rewrite text for backward compatibility"
+        # For API topic, should contain relevant terms
+        combined_text = (result['embedding_texts']['rewrite'] + ' ' + ' '.join(result['embedding_texts']['hyde'])).lower()
+        assert any(term in combined_text for term in ['api', 'rest', 'graphql']), \
+            "Should contain relevant API terms"
 
     def test_connection_and_consistency(self, query_rewriter):
         """Test LLM connection and consistency across multiple calls."""

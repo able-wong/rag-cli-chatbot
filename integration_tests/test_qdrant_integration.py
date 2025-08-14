@@ -57,7 +57,7 @@ class TestQdrantIntegration:
     
     @classmethod
     def _create_test_collection(cls):
-        """Create test collection with appropriate vector dimensions and payload indexes."""
+        """Create test collection with named dense/sparse vectors like production."""
         # Use 384 dimensions to match sentence-transformers default
         vector_size = 384
         
@@ -69,15 +69,36 @@ class TestQdrantIntegration:
         except Exception:
             pass  # Collection might not exist, which is fine
         
-        # Create fresh test collection
-        success = cls.qdrant_db.create_collection(vector_size)
-        if not success:
-            raise RuntimeError(f"Failed to create test collection '{cls.test_collection_name}'")
+        # Create collection with named dense and sparse vectors like production
+        from qdrant_client.models import VectorParams, Distance
+        
+        # Map distance metric string to Qdrant Distance enum
+        distance_map = {
+            'cosine': Distance.COSINE,
+            'euclidean': Distance.EUCLID,
+            'dot': Distance.DOT
+        }
+        distance = distance_map.get(cls.qdrant_db.distance_metric, Distance.COSINE)
+        
+        # Create collection with named vectors (dense + sparse like production)
+        vectors_config = {
+            "dense": VectorParams(size=vector_size, distance=distance),
+            "sparse": VectorParams(size=vector_size, distance=Distance.DOT)  # Sparse typically uses DOT
+        }
+        
+        try:
+            cls.qdrant_db.client.create_collection(
+                collection_name=cls.test_collection_name,
+                vectors_config=vectors_config
+            )
+            print(f"📦 Created test collection '{cls.test_collection_name}' with named dense/sparse vectors ({vector_size}D)")
+        except Exception as e:
+            raise RuntimeError(f"Failed to create test collection '{cls.test_collection_name}': {e}")
         
         # Create payload indexes for filtering
         cls._create_payload_indexes()
         
-        print(f"📦 Created test collection '{cls.test_collection_name}' with {vector_size}D vectors and payload indexes")
+        print(f"🔍 Test collection setup complete with payload indexes")
     
     @classmethod
     def _create_payload_indexes(cls):
@@ -150,17 +171,30 @@ class TestQdrantIntegration:
         import random
         random.seed(42)  # Reproducible test vectors
         
-        def generate_dummy_vector() -> List[float]:
-            """Generate normalized dummy vector for testing."""
+        def generate_dummy_dense_vector() -> List[float]:
+            """Generate normalized dummy dense vector for testing."""
             vector = [random.uniform(-1, 1) for _ in range(384)]
             # Simple normalization
             magnitude = sum(x * x for x in vector) ** 0.5
             return [x / magnitude for x in vector]
         
+        def generate_dummy_sparse_vector() -> List[float]:
+            """Generate dummy sparse vector for testing."""
+            # Sparse vectors can be mostly zeros with some non-zero values
+            vector = [0.0] * 384
+            # Add some random non-zero values
+            for _ in range(20):  # 20 non-zero values
+                idx = random.randint(0, 383)
+                vector[idx] = random.uniform(0.1, 1.0)
+            return vector
+        
         return [
             {
                 "id": 1,
-                "vector": generate_dummy_vector(),
+                "vector": {
+                    "dense": generate_dummy_dense_vector(),
+                    "sparse": generate_dummy_sparse_vector()
+                },
                 "payload": {
                     "title": "Introduction to Python Programming",
                     "author": "John Smith",
@@ -172,7 +206,10 @@ class TestQdrantIntegration:
             },
             {
                 "id": 2, 
-                "vector": generate_dummy_vector(),
+                "vector": {
+                    "dense": generate_dummy_dense_vector(),
+                    "sparse": generate_dummy_sparse_vector()
+                },
                 "payload": {
                     "title": "Machine Learning with Python",
                     "author": "Jane Doe",
@@ -184,7 +221,10 @@ class TestQdrantIntegration:
             },
             {
                 "id": 3,
-                "vector": generate_dummy_vector(), 
+                "vector": {
+                    "dense": generate_dummy_dense_vector(),
+                    "sparse": generate_dummy_sparse_vector()
+                }, 
                 "payload": {
                     "title": "JavaScript Fundamentals",
                     "author": "John Smith",  # Same author as doc1, different topic
@@ -196,7 +236,10 @@ class TestQdrantIntegration:
             },
             {
                 "id": 4,
-                "vector": generate_dummy_vector(),
+                "vector": {
+                    "dense": generate_dummy_dense_vector(),
+                    "sparse": generate_dummy_sparse_vector()
+                },
                 "payload": {
                     "title": "Advanced Python Techniques", 
                     "author": "Alice Johnson",
@@ -208,7 +251,10 @@ class TestQdrantIntegration:
             },
             {
                 "id": 5,
-                "vector": generate_dummy_vector(),
+                "vector": {
+                    "dense": generate_dummy_dense_vector(),
+                    "sparse": generate_dummy_sparse_vector()
+                },
                 "payload": {
                     "title": "Deep Learning Fundamentals",
                     "author": "Bob Wilson",
@@ -220,7 +266,10 @@ class TestQdrantIntegration:
             },
             {
                 "id": 6,
-                "vector": generate_dummy_vector(),
+                "vector": {
+                    "dense": generate_dummy_dense_vector(),
+                    "sparse": generate_dummy_sparse_vector()
+                },
                 "payload": {
                     "title": "Web Development with React",
                     "author": "Jane Doe",  # Same author as doc2, different topic
@@ -232,7 +281,10 @@ class TestQdrantIntegration:
             },
             {
                 "id": 7,
-                "vector": generate_dummy_vector(),
+                "vector": {
+                    "dense": generate_dummy_dense_vector(),
+                    "sparse": generate_dummy_sparse_vector()
+                },
                 "payload": {
                     "title": "Data Science with Python",
                     "author": "John Smith",  # Same author as doc1, doc3
@@ -244,7 +296,10 @@ class TestQdrantIntegration:
             },
             {
                 "id": 8,
-                "vector": generate_dummy_vector(),
+                "vector": {
+                    "dense": generate_dummy_dense_vector(),
+                    "sparse": generate_dummy_sparse_vector()
+                },
                 "payload": {
                     "title": "AI Ethics and Society",
                     "author": "Dr. Sarah Chen",
@@ -257,7 +312,7 @@ class TestQdrantIntegration:
         ]
     
     def _generate_dummy_query_vector(self) -> List[float]:
-        """Generate a dummy query vector for search testing."""
+        """Generate a dummy dense query vector for search testing."""
         import random
         random.seed(123)  # Different seed from document vectors
         vector = [random.uniform(-1, 1) for _ in range(384)]
