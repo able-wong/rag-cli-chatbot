@@ -25,28 +25,55 @@ class QueryRewriter:
         logger.info(f"QueryRewriter initialized with strategy: {self.retrieval_strategy}")
     
     def _build_system_prompt(self) -> str:
-        """Build the system prompt for query transformation based on retrieval strategy."""
-        return self._get_strategy_prompt_builder()
+        """Build the unified system prompt for query transformation."""
+        return self._build_unified_system_prompt()
     
-    def _get_strategy_prompt_builder(self) -> str:
-        """
-        Strategy selection method that encapsulates the logic for choosing the appropriate
-        system prompt based on the configured retrieval strategy.
-        
-        Returns:
-            The appropriate system prompt string for the configured strategy
-        """
-        strategy_map = {
-            'hyde': self._build_hyde_system_prompt,
-            'rewrite': self._build_rewrite_system_prompt
-        }
-        
-        prompt_builder = strategy_map.get(self.retrieval_strategy, self._build_rewrite_system_prompt)
-        return prompt_builder()
-    
-    def _build_shared_instructions(self) -> str:
-        """Build the shared instructions used by both strategies."""
-        return f"""Context source logic:
+
+    def _build_unified_system_prompt(self) -> str:
+        """Build the unified system prompt for query transformation that returns both rewrite and hyde formats."""
+        return f"""You are a query transformation assistant. Your job is to analyze user queries and return both rewrite (keyword) and hyde (hypothetical document) formats for optimal retrieval.
+
+**INTENT-BASED PATTERN DETECTION**:
+- Search Intent Keywords: search, find, locate, get, show, retrieve, fetch, list, lookup, discover
+- Action Intent Keywords: what, how, why, explain, compare, analyze, summarize, describe, tell, pros, cons, benefits, drawbacks
+
+Pattern Rules:
+- Pattern 1 (Pure Search): Search keywords only → Extract metadata filters + SEARCH_SUMMARY_MODE
+- Pattern 2 (Search+Action): BOTH search AND action keywords → Extract metadata filters + perform action  
+- Pattern 3 (Pure Action): Action keywords only → EMPTY filters (hard_filters: {{}}, negation_filters: {{}}, soft_filters: {{}})
+
+You must respond with a JSON object containing exactly these fields:
+- "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
+- "embedding_texts": object - Contains both formats:
+  - "rewrite": string - Core topic keywords only (for traditional keyword-based search)
+  - "hyde": array of 3 strings - Hypothetical documents from different perspectives
+- "llm_query": string - Clear instruction for the LLM with appropriate context reference
+- "hard_filters": object - Must-match metadata filters (excludes documents if not matching) - EMPTY for Pattern 3
+- "negation_filters": object - Must-NOT-match metadata filters (excludes documents if matching) - EMPTY for Pattern 3
+- "soft_filters": object - Boost-if-match metadata filters (boost score but don't exclude) - EMPTY for Pattern 3
+
+**EMBEDDING TEXT GENERATION**:
+
+For "rewrite": Extract core topic keywords only, ignoring instruction words like "explain", "compare", "pros and cons"
+
+For "hyde": Generate 3 hypothetical documents (2-4 sentences each) from different personas based on topic:
+
+**Science Topics** (AI, machine learning, physics, biology, etc.):
+1. Science Professor perspective: Technical, detailed, research-focused
+2. Science Teacher perspective: Educational, accessible, structured explanation  
+3. Student perspective: Learning-focused, question-driven, discovery-oriented
+
+**Business Topics** (management, strategy, finance, marketing, etc.):
+1. Director perspective: Strategic, high-level, decision-focused
+2. Manager perspective: Operational, practical, implementation-focused
+3. Assistant perspective: Detailed, process-oriented, support-focused
+
+**Other Topics**:
+1. Expert perspective: Authoritative, comprehensive, professional
+2. Educator perspective: Teaching-focused, well-structured, informative
+3. Learner perspective: Curious, exploratory, growth-minded
+
+Context source logic:
 1. **If "{self.trigger_phrase}" present**: Always search knowledge base
 
    **CRITICAL RULE - Intent-Based Pattern Detection**:
@@ -115,194 +142,45 @@ class QueryRewriter:
    - **Conversational references** (uses "that", "it", "the X part", "more about", "tell me more", "what you mentioned", etc.):
      Use "based on context in previous conversation" in llm_query
    - **General standalone questions**: 
-     No context reference needed in llm_query"""
-
-    def _build_shared_examples(self) -> str:
-        """Build the shared examples used by both strategies.""" 
-        return f"""User: "What is machine learning?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "Tell me more about the automation benefits"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "Can you elaborate on that approach?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "search {self.trigger_phrase} on vibe coding only from John Wong"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"author": "John Wong"}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} find papers about Python, without tag gemini"
-Response: {{"search_rag": true, "embedding_source_text": "Python", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{"tags": ["gemini"]}}, "soft_filters": {{}}}}
-
-User: "search {self.trigger_phrase} on AI research by Dr. Smith, explain the methodology"
-Response: {{"search_rag": true, "embedding_source_text": "AI research", "llm_query": "Based on the provided context, explain the methodology.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Dr. Smith", "tags": ["ai research"]}}}}
-
-User: "{self.trigger_phrase} get documents on machine learning and summarize"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, summarize the information about machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} what is Python programming"  
-Response: {{"search_rag": true, "embedding_source_text": "Python programming", "llm_query": "Based on the provided context, explain what Python programming is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} compare REST vs GraphQL APIs"
-Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL APIs", "llm_query": "Based on the provided context, compare REST vs GraphQL APIs.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-Always respond with valid JSON only. Do not include any other text or formatting."""
-
-    def _build_rewrite_system_prompt(self) -> str:
-        """Build the system prompt for the default rewrite strategy."""
-        return f"""You are a query transformation assistant. Your job is to analyze user queries and determine the appropriate context source for responses.
-
-**INTENT-BASED PATTERN DETECTION**:
-- Search Intent Keywords: search, find, locate, get, show, retrieve, fetch, list, lookup, discover
-- Action Intent Keywords: what, how, why, explain, compare, analyze, summarize, describe, tell, pros, cons, benefits, drawbacks
-
-Pattern Rules:
-- Pattern 1 (Pure Search): Search keywords only → Extract metadata filters + SEARCH_SUMMARY_MODE
-- Pattern 2 (Search+Action): BOTH search AND action keywords → Extract metadata filters + perform action  
-- Pattern 3 (Pure Action): Action keywords only → EMPTY filters (hard_filters: {{}}, negation_filters: {{}}, soft_filters: {{}})
-
-You must respond with a JSON object containing exactly these fields:
-- "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
-- "embedding_source_text": string - Core topic keywords only, ignoring instruction words like "explain", "pros and cons" (only needed if search_rag=true)
-- "llm_query": string - Clear instruction for the LLM with appropriate context reference
-- "hard_filters": object - Must-match metadata filters (excludes documents if not matching) - EMPTY for Pattern 3
-- "negation_filters": object - Must-NOT-match metadata filters (excludes documents if matching) - EMPTY for Pattern 3
-- "soft_filters": object - Boost-if-match metadata filters (boost score but don't exclude) - EMPTY for Pattern 3
-
-{self._build_shared_instructions()}
-
-Examples:
-
-User: "{self.trigger_phrase} How does neural network training work?"
-Response: {{"search_rag": true, "embedding_source_text": "neural network training", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} find papers by John Smith about machine learning"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
-
-User: "search {self.trigger_phrase} articles ONLY from 2023 about Python programming"
-Response: {{"search_rag": true, "embedding_source_text": "Python programming", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}, "negation_filters": {{}}, "soft_filters": {{"tags": ["python", "programming"]}}}}
-
-User: "{self.trigger_phrase} get papers on vibe coding, then explain what it is"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "Based on the provided context, explain what vibe coding is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} what are the benefits of Dr. Johnson's research approach"
-Response: {{"search_rag": true, "embedding_source_text": "Dr. Johnson's research approach benefits", "llm_query": "Based on the provided context, explain the benefits of Dr. Johnson's research approach.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} explain the differences between REST and GraphQL"
-Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL differences", "llm_query": "Based on the provided context, explain the differences between REST and GraphQL.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "locate {self.trigger_phrase} papers with tags python, AI, not by Johnson"
-Response: {{"search_rag": true, "embedding_source_text": "python AI", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{"author": "Johnson"}}, "soft_filters": {{"tags": ["python", "ai"]}}}}
-
-User: "{self.trigger_phrase} retrieve documents on machine learning and compare approaches"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, compare machine learning approaches.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} what are the differences between REST and GraphQL APIs?"  
-Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL APIs", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} summarize pros and cons of neural networks"
-Response: {{"search_rag": true, "embedding_source_text": "neural networks", "llm_query": "Based on the provided context, summarize the pros and cons of neural networks.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} papers only from John Wong, without tag gemini, then summarize pros and cons of vibe coding"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "Based on the provided context, summarize the pros and cons of vibe coding.", "hard_filters": {{"author": "John Wong"}}, "negation_filters": {{"tags": ["gemini"]}}, "soft_filters": {{}}}}
-
-User: "search {self.trigger_phrase} on vibe coding only from John Wong, without tag gemini"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"author": "John Wong"}}, "negation_filters": {{"tags": ["gemini"]}}, "soft_filters": {{}}}}
-
-User: "find {self.trigger_phrase} about Python from 2024, then compare with Java"
-Response: {{"search_rag": true, "embedding_source_text": "Python", "llm_query": "Based on the provided context, compare Python with Java.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}}}
-
-User: "{self.trigger_phrase} search on machine learning from Dr. Smith"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Dr. Smith"}}}}
-
-User: "{self.trigger_phrase} find documents about AI"
-Response: {{"search_rag": true, "embedding_source_text": "AI", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-{self._build_shared_examples()}"""
-    
-    def _build_hyde_system_prompt(self) -> str:
-        """Build the system prompt for HyDE (Hypothetical Document Embeddings) strategy."""
-        return f"""You are a query transformation assistant using the HyDE (Hypothetical Document Embeddings) strategy. Your job is to analyze user queries and generate hypothetical documents that would answer their questions.
-
-**INTENT-BASED PATTERN DETECTION**:
-- Search Intent Keywords: search, find, locate, get, show, retrieve, fetch, list, lookup, discover
-- Action Intent Keywords: what, how, why, explain, compare, analyze, summarize, describe, tell, pros, cons, benefits, drawbacks
-
-Pattern Rules:
-- Pattern 1 (Pure Search): Search keywords only → Extract metadata filters + SEARCH_SUMMARY_MODE
-- Pattern 2 (Search+Action): BOTH search AND action keywords → Extract metadata filters + perform action  
-- Pattern 3 (Pure Action): Action keywords only → EMPTY filters (hard_filters: {{}}, negation_filters: {{}}, soft_filters: {{}})
-
-You must respond with a JSON object containing exactly these fields:
-- "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
-- "embedding_source_text": string - A focused 2-4 sentence hypothetical document that answers the core topic (only needed if search_rag=true)
-- "llm_query": string - Clear instruction for the LLM with appropriate context reference
-- "hard_filters": object - Must-match metadata filters (excludes documents if not matching) - EMPTY for Pattern 3
-- "negation_filters": object - Must-NOT-match metadata filters (excludes documents if matching) - EMPTY for Pattern 3
-- "soft_filters": object - Boost-if-match metadata filters (boost score but don't exclude) - EMPTY for Pattern 3
-
-Context source logic:
-1. **If "{self.trigger_phrase}" present**: Always search knowledge base
-   - Generate a hypothetical document/passage that would answer the user's question
-   - Use "based on the provided context" in llm_query
-   - Extract metadata filters from natural language with STRICT classification:
-
-   **HARD FILTERS** - Only for explicit restrictive keywords (excludes if not matching):
-   - Keywords: "only", "exclusively", "strictly", "limited to", "solely", "must be"
-   - Examples: "papers ONLY from 2025", "articles EXCLUSIVELY by Smith", "documents STRICTLY tagged AI"
-   
-   **NEGATION FILTERS** - For clear negation keywords (excludes if matching):
-   - Keywords: "not from", "not by", "excluding", "except", "without", "other than"
-   - Examples: "not from John Wong", "excluding Smith", "except papers by Johnson"
-   
-   **SOFT FILTERS** - DEFAULT for everything else (boost score but don't exclude):
-   - All other author/date/tag mentions: "papers by Smith", "from 2025", "with tags AI", "about Python"
-   - Examples: "papers by Smith" → soft_filters, "from 2025" → soft_filters, "tagged as ML" → soft_filters
-
-   **Date format conversion** (same for all filter types):
-   - Years: "2023" → {{"publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}
-   - Quarters: "2025 Q1" → {{"publication_date": {{"gte": "2025-01-01", "lt": "2025-04-01"}}}}
-   - Months: "March 2025" → {{"publication_date": {{"gte": "2025-03-01", "lt": "2025-04-01"}}}}
-   - Since: "since 2024" → {{"publication_date": {{"gte": "2024-01-01"}}}}
-   - Before: "before 2024" → {{"publication_date": {{"lt": "2024-01-01"}}}}
-
-   **Key principle**: Everything goes to soft_filters unless explicitly restrictive or negated.
-   
-   **LLM Query Guidelines**: Focus on the core task/question only. Do NOT include metadata filtering details in the llm_query. The filtering is handled separately.
-   - GOOD: "Based on the provided context, explain what vibe coding is."
-   - BAD: "Based on the provided context, explain what vibe coding is from John Wong's 2025 papers, excluding gemini-tagged work."
-   
-2. **If no "{self.trigger_phrase}"**: Analyze if query references previous conversation
-   - **Conversational references** (uses "that", "it", "the X part", "more about", "tell me more", "what you mentioned", etc.):
-     Use "based on context in previous conversation" in llm_query
-   - **General standalone questions**: 
      No context reference needed in llm_query
 
 Examples:
 
 User: "What is machine learning?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} How does neural network training work?"
-Response: {{"search_rag": true, "embedding_source_text": "Neural network training is a process where the network learns from data through backpropagation and gradient descent. During training, the network adjusts its weights and biases by calculating the error between predicted and actual outputs, then propagating this error backward through the layers. The gradient descent algorithm optimizes these parameters iteratively to minimize the loss function, enabling the network to improve its predictions over time.", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} papers by John Smith about machine learning"
-Response: {{"search_rag": true, "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience. Common applications include image recognition, natural language processing, and predictive analytics across various industries.", "llm_query": "Based on the provided context, provide information about machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} papers published only in 2025 on vibe coding, not from John Wong, with tags gemini"
-Response: {{"search_rag": true, "embedding_source_text": "Vibe coding is a programming approach that emphasizes writing code based on intuition, flow state, and personal rhythm rather than strict methodologies. This coding style prioritizes developer comfort, creativity, and maintaining a natural coding rhythm. Practitioners focus on writing code that feels right and maintains consistent energy levels during development sessions.", "llm_query": "Based on the provided context, explain what vibe coding is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} research EXCLUSIVELY by Dr. Johnson, excluding robotics work"
-Response: {{"search_rag": true, "embedding_source_text": "Dr. Johnson's research focuses on advanced computational methods and algorithm development across multiple domains. His work spans machine learning optimization, data structures, and software engineering methodologies. The research emphasizes practical applications and theoretical foundations, contributing significantly to the field through innovative approaches and comprehensive analysis of complex problems.", "llm_query": "Based on the provided context, provide information about Dr. Johnson's research.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+Response: {{"search_rag": false, "embedding_texts": {{"rewrite": "", "hyde": ["", "", ""]}}, "llm_query": "Explain what machine learning is, including key concepts and applications.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 User: "Tell me more about the automation benefits"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+Response: {{"search_rag": false, "embedding_texts": {{"rewrite": "", "hyde": ["", "", ""]}}, "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 User: "Can you elaborate on that approach?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+Response: {{"search_rag": false, "embedding_texts": {{"rewrite": "", "hyde": ["", "", ""]}}, "llm_query": "Elaborate on that approach based on context in previous conversation.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} what are the differences between REST and GraphQL APIs?"  
-Response: {{"search_rag": true, "embedding_source_text": "REST and GraphQL are both API design approaches with distinct characteristics. REST uses multiple endpoints with fixed data structures and HTTP methods, making it simple and cacheable but potentially leading to over-fetching or under-fetching of data. GraphQL uses a single endpoint with flexible queries that allow clients to request exactly the data they need, providing better performance and developer experience but with increased complexity and learning curve.", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+User: "search {self.trigger_phrase} on vibe coding only from John Wong"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "vibe coding", "hyde": ["Vibe coding is a programming approach that emphasizes writing code based on intuition and flow state. This methodology prioritizes developer comfort and natural rhythm over strict coding standards. Research shows that vibe coding can improve code quality when developers maintain focus and enter a productive flow state.", "Vibe coding teaches students to trust their programming instincts while maintaining good practices. This approach encourages learning through experimentation and personal coding style development. Students discover that coding becomes more enjoyable when they find their natural rhythm and preferred development environment.", "I've been exploring vibe coding as a way to make programming more intuitive and enjoyable. It involves writing code that feels natural and maintains a good flow, rather than strictly following rigid patterns. This approach helps me stay motivated and productive during long coding sessions."]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"author": "John Wong"}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+
+User: "{self.trigger_phrase} find papers about Python, without tag gemini"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "Python", "hyde": ["Python is a high-level programming language known for its simplicity and versatility. It supports multiple programming paradigms and has extensive libraries for web development, data analysis, artificial intelligence, and scientific computing. Python's readable syntax makes it an excellent choice for both beginners and experienced developers.", "Python programming is taught as an accessible introduction to computer science concepts. Students learn about variables, functions, loops, and object-oriented programming through Python's clear syntax. The language's extensive documentation and community support make it ideal for educational environments.", "I'm learning Python because of its reputation for being beginner-friendly yet powerful enough for complex projects. The language's clean syntax helps me focus on problem-solving rather than complicated code structure. Python's vast ecosystem of libraries opens up possibilities in web development, data science, and automation."]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{"tags": ["gemini"]}}, "soft_filters": {{}}}}
+
+User: "search {self.trigger_phrase} on AI research by Dr. Smith, explain the methodology"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "AI research", "hyde": ["AI research encompasses machine learning, natural language processing, computer vision, and robotics. Current methodologies focus on deep learning architectures, reinforcement learning, and neural network optimization. Research priorities include improving model interpretability, reducing computational requirements, and addressing ethical considerations in AI deployment.", "AI research is an exciting field that combines computer science, mathematics, and cognitive science. Students explore how computers can simulate human intelligence through algorithms and data processing. The field covers topics like pattern recognition, decision-making systems, and automated reasoning.", "I'm fascinated by AI research and how it's transforming technology across industries. The field involves creating systems that can learn, adapt, and make decisions like humans. Key areas include machine learning algorithms, neural networks, and developing AI that can understand and process human language."]}}, "llm_query": "Based on the provided context, explain the methodology.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Dr. Smith", "tags": ["ai research"]}}}}
+
+User: "{self.trigger_phrase} get documents on machine learning and summarize"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "machine learning", "hyde": ["Machine learning enables systems to automatically learn and improve from experience without explicit programming. Advanced algorithms analyze large datasets to identify patterns, make predictions, and optimize decision-making processes. Applications include recommendation systems, fraud detection, medical diagnosis, and autonomous vehicle navigation.", "Machine learning is a core component of computer science education that teaches how computers can learn from data. Students study algorithms like decision trees, neural networks, and clustering methods. The curriculum covers both theoretical foundations and practical applications in various industries.", "I'm studying machine learning to understand how computers can automatically improve their performance on tasks. The field combines statistics, computer science, and domain expertise to build systems that learn from data. It's exciting to see how these techniques are being applied to solve real-world problems."]}}, "llm_query": "Based on the provided context, summarize the information about machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+
+User: "{self.trigger_phrase} what is Python programming"  
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "Python programming", "hyde": ["Python programming involves using a high-level, interpreted language designed for code readability and simplicity. Professional developers leverage Python's extensive standard library and third-party packages for web development, data analysis, artificial intelligence, and automation. The language's philosophy emphasizes code clarity and developer productivity.", "Python programming is often the first language taught in computer science courses due to its clear syntax and gentle learning curve. Students learn fundamental programming concepts like variables, functions, control structures, and object-oriented design through Python's approachable syntax. The language provides excellent tools for learning algorithmic thinking.", "I'm learning Python programming because it's known for being beginner-friendly while still being powerful enough for professional development. The language reads almost like English, making it easier to understand and write code. Python's versatility means I can use it for web development, data analysis, or automation projects."]}}, "llm_query": "Based on the provided context, explain what Python programming is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+
+User: "{self.trigger_phrase} compare REST vs GraphQL APIs"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "REST GraphQL APIs", "hyde": ["REST and GraphQL represent different architectural approaches to API design. REST uses multiple endpoints with fixed data structures, while GraphQL provides a single endpoint with flexible query capabilities. Enterprise architects must consider factors like caching, tooling maturity, team expertise, and specific use case requirements when choosing between these technologies.", "REST and GraphQL are two important API technologies taught in web development courses. Students learn that REST uses HTTP methods and multiple URLs to access resources, while GraphQL allows clients to request exactly the data they need through a single endpoint. Both approaches have specific advantages depending on the application requirements.", "I'm comparing REST and GraphQL APIs to understand which approach works better for different projects. REST seems simpler and more familiar, using standard HTTP methods, while GraphQL offers more flexibility in data fetching. The choice depends on factors like project complexity, team experience, and performance requirements."]}}, "llm_query": "Based on the provided context, compare REST vs GraphQL APIs.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+
+User: "{self.trigger_phrase} How does neural network training work?"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "neural network training", "hyde": ["Neural network training involves adjusting weights and biases through backpropagation algorithms. The process uses gradient descent to minimize loss functions, enabling networks to learn patterns from data. This iterative optimization allows networks to improve prediction accuracy over multiple training epochs.", "Neural network training is the process where computers learn to recognize patterns by adjusting internal connections. During training, the network compares its predictions to correct answers and updates its parameters to reduce errors. This learning process involves mathematical techniques like backpropagation and gradient descent.", "I'm studying how neural networks learn from data through a training process. The network starts with random weights and gradually adjusts them by looking at examples and learning from mistakes. Each training cycle helps the network get better at making accurate predictions on new, unseen data."]}}, "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+
+User: "{self.trigger_phrase} find papers by John Smith about machine learning"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "machine learning", "hyde": ["Machine learning research encompasses supervised, unsupervised, and reinforcement learning paradigms. Current methodologies focus on deep neural networks, ensemble methods, and transfer learning techniques. Applications span computer vision, natural language processing, and predictive analytics across multiple domains.", "Machine learning is a field of study that teaches computers to learn patterns from data without explicit programming. Students learn about different algorithms like decision trees, neural networks, and clustering methods. The goal is to build systems that can make predictions or decisions based on examples.", "I'm exploring machine learning as a powerful tool for data analysis and prediction. It involves training algorithms on datasets to recognize patterns and relationships. Key concepts include supervised learning for labeled data and unsupervised learning for finding hidden structures in data."]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
+
+User: "{self.trigger_phrase} what are the benefits of automation in business"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "automation business benefits", "hyde": ["Business automation delivers strategic advantages through cost reduction, scalability, and competitive positioning. Executive leadership recognizes automation as essential for digital transformation, enabling organizations to reallocate human resources to high-value activities while maintaining operational excellence and regulatory compliance.", "Automation implementation provides measurable business benefits including reduced operational costs, improved accuracy, and faster processing times. Managers see immediate improvements in workflow efficiency, employee productivity, and customer satisfaction. The technology enables standardization of processes and reduces human error across departments.", "I've been researching business automation and discovered it offers numerous advantages like cost savings, faster task completion, and fewer mistakes. Companies use automation to handle repetitive work, freeing up employees for more creative and strategic activities. The technology helps businesses operate more efficiently and serve customers better."]}}, "llm_query": "Based on the provided context, explain the benefits of automation in business.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 Always respond with valid JSON only. Do not include any other text or formatting."""
 
@@ -340,6 +218,18 @@ Always respond with valid JSON only. Do not include any other text or formatting
             # Convert structured llm_query to final, ready-to-use prompt
             validated_result['llm_query'] = self._build_final_llm_query(validated_result['llm_query'])
             
+            # Add backward compatibility field
+            if 'embedding_texts' in validated_result:
+                if self.retrieval_strategy == 'hyde' and 'hyde' in validated_result['embedding_texts']:
+                    # Use first hyde text for backward compatibility
+                    validated_result['embedding_source_text'] = validated_result['embedding_texts']['hyde'][0]
+                elif 'rewrite' in validated_result['embedding_texts']:
+                    validated_result['embedding_source_text'] = validated_result['embedding_texts']['rewrite']
+            
+            # Add source indicator (only if not already set by fallback)
+            if 'source' not in validated_result:
+                validated_result['source'] = 'llm'
+            
             logger.info(f"Query transformed successfully. RAG search: {validated_result['search_rag']}")
             return validated_result
             
@@ -372,12 +262,17 @@ Format your response clearly with the sections above."""
         Returns:
             Validated result dictionary
         """
-        # Check required fields
-        required_fields = ['search_rag', 'embedding_source_text', 'llm_query']
+        # Check required fields - embedding_texts is now required, embedding_source_text for fallback
+        required_fields = ['search_rag', 'llm_query']
         for field in required_fields:
             if field not in result:
                 logger.warning(f"Missing field '{field}' in transformation result")
                 return self._create_fallback_result(original_query)
+        
+        # Check for new embedding_texts structure
+        if 'embedding_texts' not in result:
+            logger.warning("Missing 'embedding_texts' field in transformation result")
+            return self._create_fallback_result(original_query)
         
         # Ensure all filter fields exist
         if 'hard_filters' not in result:
@@ -396,11 +291,28 @@ Format your response clearly with the sections above."""
             else:
                 result['search_rag'] = bool(result['search_rag'])
         
-        # Validate embedding_source_text (only required for RAG queries)
+        # Validate embedding_texts structure (only required for RAG queries)
         if result['search_rag']:
-            if not isinstance(result['embedding_source_text'], str) or not result['embedding_source_text'].strip():
-                logger.warning("embedding_source_text is required for RAG queries")
+            embedding_texts = result.get('embedding_texts', {})
+            if not isinstance(embedding_texts, dict):
+                logger.warning("embedding_texts must be a dictionary")
                 return self._create_fallback_result(original_query)
+            
+            # Validate rewrite text
+            if 'rewrite' not in embedding_texts or not isinstance(embedding_texts['rewrite'], str) or not embedding_texts['rewrite'].strip():
+                logger.warning("embedding_texts.rewrite is required for RAG queries")
+                return self._create_fallback_result(original_query)
+            
+            # Validate hyde texts array
+            if 'hyde' not in embedding_texts or not isinstance(embedding_texts['hyde'], list) or len(embedding_texts['hyde']) != 3:
+                logger.warning("embedding_texts.hyde must be an array of 3 strings")
+                return self._create_fallback_result(original_query)
+            
+            # Validate each hyde text
+            for i, hyde_text in enumerate(embedding_texts['hyde']):
+                if not isinstance(hyde_text, str) or not hyde_text.strip():
+                    logger.warning(f"embedding_texts.hyde[{i}] must be a non-empty string")
+                    return self._create_fallback_result(original_query)
         
         # Validate llm_query is not empty
         if not isinstance(result['llm_query'], str) or not result['llm_query'].strip():
@@ -444,10 +356,15 @@ Format your response clearly with the sections above."""
         fallback_result = {
             'search_rag': search_rag,
             'embedding_source_text': clean_query,
+            'embedding_texts': {
+                'rewrite': clean_query,
+                'hyde': [clean_query, clean_query, clean_query]
+            },
             'llm_query': user_query,
             'hard_filters': {},
             'negation_filters': {},
-            'soft_filters': {}
+            'soft_filters': {},
+            'source': 'fallback'
         }
         
         logger.info("Using fallback query transformation")
@@ -463,24 +380,22 @@ Format your response clearly with the sections above."""
         try:
             test_query = f"{self.trigger_phrase} What is artificial intelligence?"
             
-            # Try to call LLM directly to test actual connection, not fallback
-            messages = [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": test_query}
-            ]
+            # Test the complete transform_query process
+            result = self.transform_query(test_query)
             
-            # Try to get JSON response directly  
-            parsed_result = self.llm_client.get_json_response(
-                messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
-            
-            # Validate the test result has required fields
-            expected_fields = ['search_rag', 'embedding_source_text', 'llm_query', 'hard_filters', 'negation_filters', 'soft_filters']
-            if all(field in parsed_result for field in expected_fields):
-                logger.info("QueryRewriter connection test successful")
-                return True
+            # Validate the final result has required fields including source
+            expected_fields = ['search_rag', 'embedding_texts', 'llm_query', 'hard_filters', 'negation_filters', 'soft_filters', 'source']
+            if all(field in result for field in expected_fields):
+                # Also check embedding_texts structure
+                embedding_texts = result.get('embedding_texts', {})
+                if ('rewrite' in embedding_texts and 'hyde' in embedding_texts and 
+                    isinstance(embedding_texts['hyde'], list) and len(embedding_texts['hyde']) == 3 and
+                    result['source'] == 'llm'):
+                    logger.info("QueryRewriter connection test successful")
+                    return True
+                else:
+                    logger.error("QueryRewriter test failed: invalid structure or not from LLM")
+                    return False
             else:
                 logger.error("QueryRewriter test failed: missing required fields")
                 return False

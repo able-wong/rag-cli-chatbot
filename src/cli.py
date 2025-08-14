@@ -674,8 +674,18 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 use_rag = query_analysis['search_rag']
                 
                 if use_rag:
-                    # Perform RAG search with optimized embedding text and all filter types
-                    embedding_text = query_analysis['embedding_source_text']
+                    # Select appropriate embedding text based on retrieval strategy
+                    retrieval_strategy = self.config_manager.get('rag.retrieval_strategy', 'rewrite')
+                    embedding_texts = query_analysis.get('embedding_texts', {})
+                    
+                    if retrieval_strategy == 'hyde' and 'hyde' in embedding_texts and embedding_texts['hyde']:
+                        # Use first hyde text for backward compatibility
+                        embedding_text = embedding_texts['hyde'][0]
+                    elif 'rewrite' in embedding_texts:
+                        embedding_text = embedding_texts['rewrite']
+                    else:
+                        # Fallback to legacy field for backward compatibility
+                        embedding_text = query_analysis.get('embedding_source_text', '')
                     
                     search_display = embedding_text[:DISPLAY_TEXT_TRUNCATE_LENGTH] + "..." if len(embedding_text) > DISPLAY_TEXT_TRUNCATE_LENGTH else embedding_text
                     

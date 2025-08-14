@@ -20,6 +20,31 @@ def create_mock_llm_client():
     mock_client.get_json_response = Mock()
     return mock_client
 
+def create_mock_response(search_rag, rewrite_text="", hyde_texts=None, llm_query="", 
+                        hard_filters=None, negation_filters=None, soft_filters=None, source="llm"):
+    """Create a standardized mock response with new embedding_texts structure."""
+    if hyde_texts is None:
+        hyde_texts = ["", "", ""]
+    if hard_filters is None:
+        hard_filters = {}
+    if negation_filters is None:
+        negation_filters = {}
+    if soft_filters is None:
+        soft_filters = {}
+        
+    return {
+        "search_rag": search_rag,
+        "embedding_texts": {
+            "rewrite": rewrite_text,
+            "hyde": hyde_texts
+        },
+        "llm_query": llm_query,
+        "hard_filters": hard_filters,
+        "negation_filters": negation_filters,
+        "soft_filters": soft_filters,
+        "source": source
+    }
+
 def test_query_rewriter_initialization():
     """Test QueryRewriter initialization."""
     mock_llm = create_mock_llm_client()
@@ -64,16 +89,32 @@ def test_trigger_detection_in_transformation():
     # Mock valid JSON response with trigger detected
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "Python programming language",
-        "llm_query": "What is Python programming language?"
+        "embedding_texts": {
+            "rewrite": "Python programming language",
+            "hyde": ["Python is a high-level programming language text 1", "Python programming language text 2", "Python language text 3"]
+        },
+        "llm_query": "What is Python programming language?",
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query("@knowledgebase What is Python?")
     
     assert result['search_rag'] is True
-    assert 'Python' in result['embedding_source_text']
+    assert 'embedding_texts' in result
+    assert 'rewrite' in result['embedding_texts']
+    assert 'hyde' in result['embedding_texts']
+    assert 'Python' in result['embedding_texts']['rewrite']
+    assert len(result['embedding_texts']['hyde']) == 3
+    assert all('Python' in hyde_text for hyde_text in result['embedding_texts']['hyde'])
     assert result['llm_query'] == "What is Python programming language?"
+    # Check backward compatibility field is set
+    assert 'embedding_source_text' in result
+    assert 'Python' in result['embedding_source_text']
+    # Check source field
+    assert result['source'] == 'llm'
     mock_llm.get_json_response.assert_called_once()
 
 def test_no_trigger_detection():
@@ -85,16 +126,25 @@ def test_no_trigger_detection():
     # Mock valid JSON response without trigger
     mock_response = {
         "search_rag": False,
-        "embedding_source_text": "weather today",
-        "llm_query": "What is the weather today?"
+        "embedding_texts": {
+            "rewrite": "",
+            "hyde": ["", "", ""]
+        },
+        "llm_query": "What is the weather today?",
+        "hard_filters": {},
+        "negation_filters": {},
+        "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query("What is the weather today?")
     
     assert result['search_rag'] is False
-    assert result['embedding_source_text'] == "weather today"
+    assert 'embedding_texts' in result
+    assert result['embedding_texts']['rewrite'] == ""
+    assert all(text == "" for text in result['embedding_texts']['hyde'])
     assert result['llm_query'] == "What is the weather today?"
+    assert result['source'] == 'llm'
 
 def test_json_parsing_markdown_wrapped():
     """Test that QueryRewriter works with LLMClient's JSON parsing (including markdown handling)."""
@@ -103,18 +153,47 @@ def test_json_parsing_markdown_wrapped():
     rewriter = QueryRewriter(mock_llm, config)
     
     # Mock JSON response (LLMClient handles markdown parsing internally)
-    mock_response = {
-        "search_rag": True,
-        "embedding_source_text": "machine learning algorithms",
-        "llm_query": "Explain machine learning algorithms"
-    }
+    mock_response = create_mock_response(
+        search_rag=True,
+        rewrite_text="machine learning algorithms",
+        hyde_texts=["ML algorithms are computational methods", "Machine learning uses algorithms", "Algorithms help computers learn"],
+        llm_query="Explain machine learning algorithms"
+    )
     mock_llm.get_json_response.return_value = mock_response
     
     result = rewriter.transform_query("@knowledgebase Explain ML algorithms")
     
     assert result['search_rag'] is True
-    assert result['embedding_source_text'] == "machine learning algorithms"
+    assert 'embedding_texts' in result
+    assert result['embedding_texts']['rewrite'] == "machine learning algorithms"
+    assert len(result['embedding_texts']['hyde']) == 3
     assert result['llm_query'] == "Explain machine learning algorithms"
+    assert result['source'] == 'llm'
+
+def test_source_field_llm_vs_fallback():
+    """Test that source field correctly distinguishes between LLM and fallback responses."""
+    
+    # Test 1: Successful LLM response
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    mock_response = create_mock_response(
+        search_rag=True,
+        rewrite_text="test content",
+        hyde_texts=["hyde1", "hyde2", "hyde3"],
+        llm_query="test query"
+    )
+    mock_llm.get_json_response.return_value = mock_response
+    
+    result = rewriter.transform_query("@knowledgebase test query")
+    assert result['source'] == 'llm', "Should indicate LLM source for successful response"
+    
+    # Test 2: LLM exception triggers fallback
+    mock_llm.get_json_response.side_effect = Exception("LLM service unavailable")
+    
+    result = rewriter.transform_query("@knowledgebase test query")
+    assert result['source'] == 'fallback', "Should indicate fallback source when LLM fails"
 
 def test_json_parsing_with_extra_text():
     """Test that QueryRewriter works with LLMClient's JSON parsing (including extraction from text)."""
@@ -151,6 +230,7 @@ def test_malformed_json_fallback():
     assert result['search_rag'] is True  # Trigger detected
     assert result['embedding_source_text'] == "What is AI?"  # Trigger removed
     assert result['llm_query'] == "@knowledgebase What is AI?"  # Original query
+    assert result['source'] == 'fallback'  # Should indicate fallback source
 
 def test_missing_fields_fallback():
     """Test fallback when JSON is missing required fields."""
@@ -158,11 +238,11 @@ def test_missing_fields_fallback():
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
     
-    # Mock incomplete JSON response
+    # Mock incomplete JSON response - missing embedding_texts which is now required
     mock_response = {
         "search_rag": True,
-        "embedding_source_text": "incomplete response"
-        # Missing llm_query field
+        "llm_query": "test query"
+        # Missing embedding_texts field
     }
     mock_llm.get_json_response.return_value = mock_response
     
@@ -172,6 +252,7 @@ def test_missing_fields_fallback():
     assert result['search_rag'] is True
     assert result['embedding_source_text'] == "Test query"
     assert result['llm_query'] == "@knowledgebase Test query"
+    assert result['source'] == 'fallback'
 
 def test_trigger_detection_mismatch_correction():
     """Test correction when LLM incorrectly detects trigger phrase."""
@@ -359,6 +440,7 @@ def test_query_cleaning_in_fallback():
     assert result['search_rag'] is True
     assert result['embedding_source_text'] == "What is machine learning?"
     assert result['llm_query'] == "@knowledgebase    What is machine learning?   "
+    assert result['source'] == 'fallback'
 
 def test_empty_query_after_trigger_fallback():
     """Test fallback behavior when query contains only trigger phrase."""
