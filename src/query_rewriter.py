@@ -25,286 +25,60 @@ class QueryRewriter:
         logger.info(f"QueryRewriter initialized with strategy: {self.retrieval_strategy}")
     
     def _build_system_prompt(self) -> str:
-        """Build the system prompt for query transformation based on retrieval strategy."""
-        return self._get_strategy_prompt_builder()
+        """Build the unified system prompt for query transformation."""
+        return self._build_unified_system_prompt()
     
-    def _get_strategy_prompt_builder(self) -> str:
-        """
-        Strategy selection method that encapsulates the logic for choosing the appropriate
-        system prompt based on the configured retrieval strategy.
-        
-        Returns:
-            The appropriate system prompt string for the configured strategy
-        """
-        strategy_map = {
-            'hyde': self._build_hyde_system_prompt,
-            'rewrite': self._build_rewrite_system_prompt
-        }
-        
-        prompt_builder = strategy_map.get(self.retrieval_strategy, self._build_rewrite_system_prompt)
-        return prompt_builder()
-    
-    def _build_shared_instructions(self) -> str:
-        """Build the shared instructions used by both strategies."""
-        return f"""Context source logic:
-1. **If "{self.trigger_phrase}" present**: Always search knowledge base
 
-   **CRITICAL RULE - Intent-Based Pattern Detection**:
-   - Pattern 1 (Pure Search): Search keywords only → Extract metadata filters + SEARCH_SUMMARY_MODE
-   - Pattern 2 (Search+Action): Search AND action keywords → Extract metadata filters + perform action
-   - Pattern 3 (Pure Action): Action keywords only → NO metadata extraction, all filters empty
-   
-   - Extract metadata filters from natural language with STRICT classification (ONLY for Patterns 1&2):
+    def _build_unified_system_prompt(self) -> str:
+        """Build the unified system prompt for query transformation that returns both rewrite and hyde formats."""
+        return f"""Transform user queries into structured format for retrieval. Return both keyword and hypothetical document formats.
 
-   **HARD FILTERS** - Only for explicit restrictive keywords (excludes if not matching):
-   - Keywords: "only", "exclusively", "strictly", "limited to", "solely", "must be"
-   - Examples: "papers ONLY from 2025", "articles EXCLUSIVELY by Smith", "documents STRICTLY tagged AI"
-   
-   **NEGATION FILTERS** - For clear negation keywords (excludes if matching):
-   - Keywords: "not from", "not by", "excluding", "except", "without", "other than"
-   - Examples: "not from John Wong", "excluding Smith", "except papers by Johnson"
-   
-   **SOFT FILTERS** - DEFAULT for everything else (boost score but don't exclude):
-   - All other author/date/tag mentions: "papers by Smith", "from 2025", "with tags AI", "about Python"
-   - Examples: "papers by Smith" → soft_filters, "from 2025" → soft_filters, "tagged as ML" → soft_filters
+**RESPONSE FORMAT** (JSON only):
+- "search_rag": boolean - True if query contains "{self.trigger_phrase}"
+- "embedding_texts": {{"rewrite": "keywords", "hyde": ["doc1", "doc2", "doc3"]}}
+- "llm_query": string - LLM instruction
+- "hard_filters": object - Must-match filters
+- "negation_filters": object - Must-NOT-match filters  
+- "soft_filters": object - Boost-if-match filters
 
-   **Date format conversion** (same for all filter types):
-   - Years: "2023" → {{"publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}
-   - Quarters: "2025 Q1" → {{"publication_date": {{"gte": "2025-01-01", "lt": "2025-04-01"}}}}
-   - Months: "March 2025" → {{"publication_date": {{"gte": "2025-03-01", "lt": "2025-04-01"}}}}
-   - Since: "since 2024" → {{"publication_date": {{"gte": "2024-01-01"}}}}
-   - Before: "before 2024" → {{"publication_date": {{"lt": "2024-01-01"}}}}
+**EMBEDDING GENERATION**:
+- "rewrite": Extract core topic keywords only
+- "hyde": Generate 3 short hypothetical documents (1-2 sentences each) from different perspectives:
+  * Science topics: Professor/Teacher/Student views
+  * Business topics: Director/Manager/Assistant views
+  * Other topics: Expert/Educator/Learner views
 
-   **Key principle**: Everything goes to soft_filters unless explicitly restrictive or negated.
-   
-   **Intent-Based Pattern Detection**: Classify queries by detecting intent, not word order:
-   
-   **Search Intent Keywords**: search, find, locate, get, show, retrieve, fetch, list, lookup, discover
-   **Action Intent Keywords**: what, how, why, explain, compare, analyze, summarize, describe, tell, pros, cons, benefits, drawbacks
-   
-   **Pattern 1 - Pure Search Intent**: Contains search keywords, no action keywords
-   - "search @knowledgebase on [topic]" → SEARCH_SUMMARY_MODE + extract metadata filters
-   - "@knowledgebase find papers by Smith" → SEARCH_SUMMARY_MODE + extract metadata filters  
-   - "get @knowledgebase documents from 2024" → SEARCH_SUMMARY_MODE + extract metadata filters
-   - Key: Search intent detected, no analysis/question intent
-   - Result: Document summaries + question suggestions
-   
-   **Pattern 2 - Search + Action Intent**: Contains BOTH search AND action keywords
-   - "search @knowledgebase on AI, explain the concepts" → Two-stage processing + extract metadata filters
-   - "@knowledgebase find papers by Smith and summarize" → Two-stage processing + extract metadata filters
-   - "get @knowledgebase docs on Python, what are key features" → Two-stage processing + extract metadata filters
-   - Key: Both search and action intents detected in same query
-   - Natural connectors: commas, "and", "then", or contextual flow
-   - Result: Search for documents, then perform action on retrieved results
-   
-   **Pattern 3 - Pure Action Intent**: Contains action keywords, no search keywords  
-   - "@knowledgebase what is AI" → Regular RAG question + NO metadata filter extraction
-   - "@knowledgebase explain Python programming" → Regular RAG question + NO metadata filter extraction
-   - "@knowledgebase compare REST vs GraphQL" → Regular RAG question + NO metadata filter extraction
-   - Key: Only action/question intent detected, no search intent
-   - **IMPORTANT**: Pattern 3 treats ALL metadata references as semantic context, not as filters to extract
-   - Result: Standard context-based response with empty filter objects
-   
-   **LLM Query Guidelines**: 
-   - For search-only: llm_query = "SEARCH_SUMMARY_MODE"
-   - For questions: Focus on the core task/question only. Do NOT include metadata filtering details.
-   - GOOD: "Based on the provided context, explain what vibe coding is."
-   - BAD: "Based on the provided context, explain what vibe coding is from John Wong's 2025 papers, excluding gemini-tagged work."
-   
-2. **If no "{self.trigger_phrase}"**: Analyze if query references previous conversation
-   - **Conversational references** (uses "that", "it", "the X part", "more about", "tell me more", "what you mentioned", etc.):
-     Use "based on context in previous conversation" in llm_query
-   - **General standalone questions**: 
-     No context reference needed in llm_query"""
+**FILTER RULES** (only when "{self.trigger_phrase}" present):
+- **Soft filters**: DEFAULT for ALL mentions (authors, dates, tags) - "papers by Smith", "from 2024"
+- **Hard filters**: ONLY explicit restrictions ("papers ONLY from 2024", "exclusively by Smith")
+- **Negation filters**: ONLY clear negations ("not from Smith", "excluding 2024")
+- **Empty filters**: For pure questions without search intent
 
-    def _build_shared_examples(self) -> str:
-        """Build the shared examples used by both strategies.""" 
-        return f"""User: "What is machine learning?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+KEY RULE: Everything goes to soft_filters unless explicitly restrictive or negated.
 
-User: "Tell me more about the automation benefits"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+**PATTERNS**:
+1. Pure search: "find papers by Smith" → SEARCH_SUMMARY_MODE + extract filters
+2. Search + action: "find papers by Smith and explain" → action + extract filters
+3. Pure action: "explain machine learning" → action + empty filters
 
-User: "Can you elaborate on that approach?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+**EXAMPLES**:
 
-User: "search {self.trigger_phrase} on vibe coding only from John Wong"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"author": "John Wong"}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+User: "What is Python?"
+Response: {{"search_rag": false, "embedding_texts": {{"rewrite": "", "hyde": ["", "", ""]}}, "llm_query": "Explain what Python is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} find papers about Python, without tag gemini"
-Response: {{"search_rag": true, "embedding_source_text": "Python", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{"tags": ["gemini"]}}, "soft_filters": {{}}}}
+User: "{self.trigger_phrase} find papers by Smith"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers", "hyde": ["Research papers contain peer-reviewed findings.", "Academic papers present systematic research.", "Papers document experimental results."]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Smith"}}}}
 
-User: "search {self.trigger_phrase} on AI research by Dr. Smith, explain the methodology"
-Response: {{"search_rag": true, "embedding_source_text": "AI research", "llm_query": "Based on the provided context, explain the methodology.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Dr. Smith", "tags": ["ai research"]}}}}
+User: "{self.trigger_phrase} papers by Smith from 2024"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers Smith 2024", "hyde": ["Research papers by Smith from 2024.", "Smith's 2024 publications show recent work.", "2024 papers by Smith present new findings."]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Smith", "publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}}}
 
-User: "{self.trigger_phrase} get documents on machine learning and summarize"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, summarize the information about machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+User: "{self.trigger_phrase} papers ONLY from 2024, not by Johnson"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers 2024", "hyde": ["2024 papers show recent research.", "Current papers reflect latest findings.", "Recent papers demonstrate new methods."]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}, "negation_filters": {{"author": "Johnson"}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} what is Python programming"  
-Response: {{"search_rag": true, "embedding_source_text": "Python programming", "llm_query": "Based on the provided context, explain what Python programming is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+User: "{self.trigger_phrase} explain machine learning"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "machine learning", "hyde": ["Machine learning uses algorithms to find patterns in data.", "ML teaches computers to learn from examples.", "Studying ML helps understand automated learning systems."]}}, "llm_query": "Based on the provided context, explain machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
-User: "{self.trigger_phrase} compare REST vs GraphQL APIs"
-Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL APIs", "llm_query": "Based on the provided context, compare REST vs GraphQL APIs.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-Always respond with valid JSON only. Do not include any other text or formatting."""
-
-    def _build_rewrite_system_prompt(self) -> str:
-        """Build the system prompt for the default rewrite strategy."""
-        return f"""You are a query transformation assistant. Your job is to analyze user queries and determine the appropriate context source for responses.
-
-**INTENT-BASED PATTERN DETECTION**:
-- Search Intent Keywords: search, find, locate, get, show, retrieve, fetch, list, lookup, discover
-- Action Intent Keywords: what, how, why, explain, compare, analyze, summarize, describe, tell, pros, cons, benefits, drawbacks
-
-Pattern Rules:
-- Pattern 1 (Pure Search): Search keywords only → Extract metadata filters + SEARCH_SUMMARY_MODE
-- Pattern 2 (Search+Action): BOTH search AND action keywords → Extract metadata filters + perform action  
-- Pattern 3 (Pure Action): Action keywords only → EMPTY filters (hard_filters: {{}}, negation_filters: {{}}, soft_filters: {{}})
-
-You must respond with a JSON object containing exactly these fields:
-- "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
-- "embedding_source_text": string - Core topic keywords only, ignoring instruction words like "explain", "pros and cons" (only needed if search_rag=true)
-- "llm_query": string - Clear instruction for the LLM with appropriate context reference
-- "hard_filters": object - Must-match metadata filters (excludes documents if not matching) - EMPTY for Pattern 3
-- "negation_filters": object - Must-NOT-match metadata filters (excludes documents if matching) - EMPTY for Pattern 3
-- "soft_filters": object - Boost-if-match metadata filters (boost score but don't exclude) - EMPTY for Pattern 3
-
-{self._build_shared_instructions()}
-
-Examples:
-
-User: "{self.trigger_phrase} How does neural network training work?"
-Response: {{"search_rag": true, "embedding_source_text": "neural network training", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} find papers by John Smith about machine learning"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "John Smith", "tags": ["machine learning"]}}}}
-
-User: "search {self.trigger_phrase} articles ONLY from 2023 about Python programming"
-Response: {{"search_rag": true, "embedding_source_text": "Python programming", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}, "negation_filters": {{}}, "soft_filters": {{"tags": ["python", "programming"]}}}}
-
-User: "{self.trigger_phrase} get papers on vibe coding, then explain what it is"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "Based on the provided context, explain what vibe coding is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} what are the benefits of Dr. Johnson's research approach"
-Response: {{"search_rag": true, "embedding_source_text": "Dr. Johnson's research approach benefits", "llm_query": "Based on the provided context, explain the benefits of Dr. Johnson's research approach.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} explain the differences between REST and GraphQL"
-Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL differences", "llm_query": "Based on the provided context, explain the differences between REST and GraphQL.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "locate {self.trigger_phrase} papers with tags python, AI, not by Johnson"
-Response: {{"search_rag": true, "embedding_source_text": "python AI", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{"author": "Johnson"}}, "soft_filters": {{"tags": ["python", "ai"]}}}}
-
-User: "{self.trigger_phrase} retrieve documents on machine learning and compare approaches"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "Based on the provided context, compare machine learning approaches.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} what are the differences between REST and GraphQL APIs?"  
-Response: {{"search_rag": true, "embedding_source_text": "REST GraphQL APIs", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} summarize pros and cons of neural networks"
-Response: {{"search_rag": true, "embedding_source_text": "neural networks", "llm_query": "Based on the provided context, summarize the pros and cons of neural networks.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} papers only from John Wong, without tag gemini, then summarize pros and cons of vibe coding"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "Based on the provided context, summarize the pros and cons of vibe coding.", "hard_filters": {{"author": "John Wong"}}, "negation_filters": {{"tags": ["gemini"]}}, "soft_filters": {{}}}}
-
-User: "search {self.trigger_phrase} on vibe coding only from John Wong, without tag gemini"
-Response: {{"search_rag": true, "embedding_source_text": "vibe coding", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"author": "John Wong"}}, "negation_filters": {{"tags": ["gemini"]}}, "soft_filters": {{}}}}
-
-User: "find {self.trigger_phrase} about Python from 2024, then compare with Java"
-Response: {{"search_rag": true, "embedding_source_text": "Python", "llm_query": "Based on the provided context, compare Python with Java.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}}}
-
-User: "{self.trigger_phrase} search on machine learning from Dr. Smith"
-Response: {{"search_rag": true, "embedding_source_text": "machine learning", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Dr. Smith"}}}}
-
-User: "{self.trigger_phrase} find documents about AI"
-Response: {{"search_rag": true, "embedding_source_text": "AI", "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-{self._build_shared_examples()}"""
-    
-    def _build_hyde_system_prompt(self) -> str:
-        """Build the system prompt for HyDE (Hypothetical Document Embeddings) strategy."""
-        return f"""You are a query transformation assistant using the HyDE (Hypothetical Document Embeddings) strategy. Your job is to analyze user queries and generate hypothetical documents that would answer their questions.
-
-**INTENT-BASED PATTERN DETECTION**:
-- Search Intent Keywords: search, find, locate, get, show, retrieve, fetch, list, lookup, discover
-- Action Intent Keywords: what, how, why, explain, compare, analyze, summarize, describe, tell, pros, cons, benefits, drawbacks
-
-Pattern Rules:
-- Pattern 1 (Pure Search): Search keywords only → Extract metadata filters + SEARCH_SUMMARY_MODE
-- Pattern 2 (Search+Action): BOTH search AND action keywords → Extract metadata filters + perform action  
-- Pattern 3 (Pure Action): Action keywords only → EMPTY filters (hard_filters: {{}}, negation_filters: {{}}, soft_filters: {{}})
-
-You must respond with a JSON object containing exactly these fields:
-- "search_rag": boolean - True if the user query contains "{self.trigger_phrase}", False otherwise
-- "embedding_source_text": string - A focused 2-4 sentence hypothetical document that answers the core topic (only needed if search_rag=true)
-- "llm_query": string - Clear instruction for the LLM with appropriate context reference
-- "hard_filters": object - Must-match metadata filters (excludes documents if not matching) - EMPTY for Pattern 3
-- "negation_filters": object - Must-NOT-match metadata filters (excludes documents if matching) - EMPTY for Pattern 3
-- "soft_filters": object - Boost-if-match metadata filters (boost score but don't exclude) - EMPTY for Pattern 3
-
-Context source logic:
-1. **If "{self.trigger_phrase}" present**: Always search knowledge base
-   - Generate a hypothetical document/passage that would answer the user's question
-   - Use "based on the provided context" in llm_query
-   - Extract metadata filters from natural language with STRICT classification:
-
-   **HARD FILTERS** - Only for explicit restrictive keywords (excludes if not matching):
-   - Keywords: "only", "exclusively", "strictly", "limited to", "solely", "must be"
-   - Examples: "papers ONLY from 2025", "articles EXCLUSIVELY by Smith", "documents STRICTLY tagged AI"
-   
-   **NEGATION FILTERS** - For clear negation keywords (excludes if matching):
-   - Keywords: "not from", "not by", "excluding", "except", "without", "other than"
-   - Examples: "not from John Wong", "excluding Smith", "except papers by Johnson"
-   
-   **SOFT FILTERS** - DEFAULT for everything else (boost score but don't exclude):
-   - All other author/date/tag mentions: "papers by Smith", "from 2025", "with tags AI", "about Python"
-   - Examples: "papers by Smith" → soft_filters, "from 2025" → soft_filters, "tagged as ML" → soft_filters
-
-   **Date format conversion** (same for all filter types):
-   - Years: "2023" → {{"publication_date": {{"gte": "2023-01-01", "lt": "2024-01-01"}}}}
-   - Quarters: "2025 Q1" → {{"publication_date": {{"gte": "2025-01-01", "lt": "2025-04-01"}}}}
-   - Months: "March 2025" → {{"publication_date": {{"gte": "2025-03-01", "lt": "2025-04-01"}}}}
-   - Since: "since 2024" → {{"publication_date": {{"gte": "2024-01-01"}}}}
-   - Before: "before 2024" → {{"publication_date": {{"lt": "2024-01-01"}}}}
-
-   **Key principle**: Everything goes to soft_filters unless explicitly restrictive or negated.
-   
-   **LLM Query Guidelines**: Focus on the core task/question only. Do NOT include metadata filtering details in the llm_query. The filtering is handled separately.
-   - GOOD: "Based on the provided context, explain what vibe coding is."
-   - BAD: "Based on the provided context, explain what vibe coding is from John Wong's 2025 papers, excluding gemini-tagged work."
-   
-2. **If no "{self.trigger_phrase}"**: Analyze if query references previous conversation
-   - **Conversational references** (uses "that", "it", "the X part", "more about", "tell me more", "what you mentioned", etc.):
-     Use "based on context in previous conversation" in llm_query
-   - **General standalone questions**: 
-     No context reference needed in llm_query
-
-Examples:
-
-User: "What is machine learning?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Explain what machine learning is, including key concepts and applications.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} How does neural network training work?"
-Response: {{"search_rag": true, "embedding_source_text": "Neural network training is a process where the network learns from data through backpropagation and gradient descent. During training, the network adjusts its weights and biases by calculating the error between predicted and actual outputs, then propagating this error backward through the layers. The gradient descent algorithm optimizes these parameters iteratively to minimize the loss function, enabling the network to improve its predictions over time.", "llm_query": "Explain how neural network training works based on the provided context, including the key processes and algorithms involved.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} papers by John Smith about machine learning"
-Response: {{"search_rag": true, "embedding_source_text": "Machine learning is a subset of artificial intelligence that enables computers to learn and make decisions from data without being explicitly programmed. It involves algorithms that can identify patterns, make predictions, and improve performance through experience. Common applications include image recognition, natural language processing, and predictive analytics across various industries.", "llm_query": "Based on the provided context, provide information about machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} papers published only in 2025 on vibe coding, not from John Wong, with tags gemini"
-Response: {{"search_rag": true, "embedding_source_text": "Vibe coding is a programming approach that emphasizes writing code based on intuition, flow state, and personal rhythm rather than strict methodologies. This coding style prioritizes developer comfort, creativity, and maintaining a natural coding rhythm. Practitioners focus on writing code that feels right and maintains consistent energy levels during development sessions.", "llm_query": "Based on the provided context, explain what vibe coding is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} research EXCLUSIVELY by Dr. Johnson, excluding robotics work"
-Response: {{"search_rag": true, "embedding_source_text": "Dr. Johnson's research focuses on advanced computational methods and algorithm development across multiple domains. His work spans machine learning optimization, data structures, and software engineering methodologies. The research emphasizes practical applications and theoretical foundations, contributing significantly to the field through innovative approaches and comprehensive analysis of complex problems.", "llm_query": "Based on the provided context, provide information about Dr. Johnson's research.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "Tell me more about the automation benefits"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Provide more details about the automation benefits based on context in previous conversation.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "Can you elaborate on that approach?"
-Response: {{"search_rag": false, "embedding_source_text": "", "llm_query": "Elaborate on that approach based on context in previous conversation.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-User: "{self.trigger_phrase} what are the differences between REST and GraphQL APIs?"  
-Response: {{"search_rag": true, "embedding_source_text": "REST and GraphQL are both API design approaches with distinct characteristics. REST uses multiple endpoints with fixed data structures and HTTP methods, making it simple and cacheable but potentially leading to over-fetching or under-fetching of data. GraphQL uses a single endpoint with flexible queries that allow clients to request exactly the data they need, providing better performance and developer experience but with increased complexity and learning curve.", "llm_query": "Compare and contrast REST and GraphQL APIs based on the provided context, highlighting their key differences, advantages, and use cases.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
-
-Always respond with valid JSON only. Do not include any other text or formatting."""
+Always respond with valid JSON only."""
 
     def transform_query(self, user_query: str) -> Dict[str, Any]:
         """
@@ -316,7 +90,7 @@ Always respond with valid JSON only. Do not include any other text or formatting
         Returns:
             Dict containing:
             - search_rag: boolean indicating if RAG search should be performed
-            - embedding_source_text: optimized text for vector search
+            - embedding_texts: dict with 'rewrite' and 'hyde' texts for vector search
             - llm_query: refined prompt for LLM generation
         """
         try:
@@ -339,6 +113,11 @@ Always respond with valid JSON only. Do not include any other text or formatting
             
             # Convert structured llm_query to final, ready-to-use prompt
             validated_result['llm_query'] = self._build_final_llm_query(validated_result['llm_query'])
+            
+            
+            # Add source indicator (only if not already set by fallback)
+            if 'source' not in validated_result:
+                validated_result['source'] = 'llm'
             
             logger.info(f"Query transformed successfully. RAG search: {validated_result['search_rag']}")
             return validated_result
@@ -372,12 +151,17 @@ Format your response clearly with the sections above."""
         Returns:
             Validated result dictionary
         """
-        # Check required fields
-        required_fields = ['search_rag', 'embedding_source_text', 'llm_query']
+        # Check required fields - embedding_texts is now required
+        required_fields = ['search_rag', 'llm_query']
         for field in required_fields:
             if field not in result:
                 logger.warning(f"Missing field '{field}' in transformation result")
                 return self._create_fallback_result(original_query)
+        
+        # Check for new embedding_texts structure
+        if 'embedding_texts' not in result:
+            logger.warning("Missing 'embedding_texts' field in transformation result")
+            return self._create_fallback_result(original_query)
         
         # Ensure all filter fields exist
         if 'hard_filters' not in result:
@@ -396,11 +180,39 @@ Format your response clearly with the sections above."""
             else:
                 result['search_rag'] = bool(result['search_rag'])
         
-        # Validate embedding_source_text (only required for RAG queries)
+        # Validate embedding_texts structure (only required for RAG queries)
         if result['search_rag']:
-            if not isinstance(result['embedding_source_text'], str) or not result['embedding_source_text'].strip():
-                logger.warning("embedding_source_text is required for RAG queries")
+            embedding_texts = result.get('embedding_texts', {})
+            if not isinstance(embedding_texts, dict):
+                logger.warning("embedding_texts must be a dictionary")
                 return self._create_fallback_result(original_query)
+            
+            # Validate rewrite text
+            if 'rewrite' not in embedding_texts or not isinstance(embedding_texts['rewrite'], str) or not embedding_texts['rewrite'].strip():
+                logger.warning("embedding_texts.rewrite is required for RAG queries")
+                return self._create_fallback_result(original_query)
+            
+            # Validate and clean hyde texts array
+            if 'hyde' not in embedding_texts or not isinstance(embedding_texts['hyde'], list):
+                logger.warning("embedding_texts.hyde must be an array")
+                return self._create_fallback_result(original_query)
+            
+            # Filter out empty/invalid hyde texts and keep only valid ones
+            valid_hyde_texts = []
+            for i, hyde_text in enumerate(embedding_texts['hyde']):
+                if isinstance(hyde_text, str) and hyde_text.strip():
+                    valid_hyde_texts.append(hyde_text.strip())
+                else:
+                    logger.debug(f"Filtering out empty/invalid hyde text at index {i}")
+            
+            # Require at least one valid hyde text for RAG queries
+            if len(valid_hyde_texts) == 0:
+                logger.warning("No valid hyde texts generated, falling back")
+                return self._create_fallback_result(original_query)
+            
+            # Update with cleaned hyde texts
+            embedding_texts['hyde'] = valid_hyde_texts
+            logger.debug(f"Using {len(valid_hyde_texts)} valid hyde texts out of {len(embedding_texts.get('hyde', []))}")
         
         # Validate llm_query is not empty
         if not isinstance(result['llm_query'], str) or not result['llm_query'].strip():
@@ -443,11 +255,15 @@ Format your response clearly with the sections above."""
         
         fallback_result = {
             'search_rag': search_rag,
-            'embedding_source_text': clean_query,
+            'embedding_texts': {
+                'rewrite': clean_query,
+                'hyde': [clean_query, clean_query, clean_query]
+            },
             'llm_query': user_query,
             'hard_filters': {},
             'negation_filters': {},
-            'soft_filters': {}
+            'soft_filters': {},
+            'source': 'fallback'
         }
         
         logger.info("Using fallback query transformation")
@@ -463,24 +279,22 @@ Format your response clearly with the sections above."""
         try:
             test_query = f"{self.trigger_phrase} What is artificial intelligence?"
             
-            # Try to call LLM directly to test actual connection, not fallback
-            messages = [
-                {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": test_query}
-            ]
+            # Test the complete transform_query process
+            result = self.transform_query(test_query)
             
-            # Try to get JSON response directly  
-            parsed_result = self.llm_client.get_json_response(
-                messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens
-            )
-            
-            # Validate the test result has required fields
-            expected_fields = ['search_rag', 'embedding_source_text', 'llm_query', 'hard_filters', 'negation_filters', 'soft_filters']
-            if all(field in parsed_result for field in expected_fields):
-                logger.info("QueryRewriter connection test successful")
-                return True
+            # Validate the final result has required fields including source
+            expected_fields = ['search_rag', 'embedding_texts', 'llm_query', 'hard_filters', 'negation_filters', 'soft_filters', 'source']
+            if all(field in result for field in expected_fields):
+                # Also check embedding_texts structure
+                embedding_texts = result.get('embedding_texts', {})
+                if ('rewrite' in embedding_texts and 'hyde' in embedding_texts and 
+                    isinstance(embedding_texts['hyde'], list) and len(embedding_texts['hyde']) >= 1 and
+                    result['source'] == 'llm'):
+                    logger.info("QueryRewriter connection test successful")
+                    return True
+                else:
+                    logger.error("QueryRewriter test failed: invalid structure or not from LLM")
+                    return False
             else:
                 logger.error("QueryRewriter test failed: missing required fields")
                 return False

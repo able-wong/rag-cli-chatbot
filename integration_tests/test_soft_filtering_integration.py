@@ -69,7 +69,7 @@ class TestSoftFilteringIntegration:
     
     def validate_three_filter_structure(self, result: Dict[str, Any]) -> bool:
         """Validate that result has the new three-filter structure."""
-        required_fields = ['search_rag', 'embedding_source_text', 'llm_query', 
+        required_fields = ['search_rag', 'embedding_texts', 'llm_query', 
                           'hard_filters', 'negation_filters', 'soft_filters']
         
         if not all(field in result for field in required_fields):
@@ -79,7 +79,18 @@ class TestSoftFilteringIntegration:
         if not isinstance(result['search_rag'], bool):
             return False
         
-        if not isinstance(result['embedding_source_text'], str):
+        # Validate embedding_texts structure
+        if not isinstance(result['embedding_texts'], dict):
+            return False
+        
+        embedding_texts = result['embedding_texts']
+        if 'rewrite' not in embedding_texts or 'hyde' not in embedding_texts:
+            return False
+        
+        if not isinstance(embedding_texts['rewrite'], str):
+            return False
+        
+        if not isinstance(embedding_texts['hyde'], list):
             return False
         
         if not isinstance(result['llm_query'], str) or not result['llm_query'].strip():
@@ -399,7 +410,7 @@ class TestSoftFilteringIntegration:
         
         print("End-to-End Pipeline Test:")
         print(f"  Original Query: {user_query}")
-        print(f"  Embedding Text: {query_result['embedding_source_text']}")
+        print(f"  Embedding Text: {query_result['embedding_texts']['rewrite']}")
         print(f"  Hard Filters: {query_result['hard_filters']}")
         print(f"  Negation Filters: {query_result['negation_filters']}")
         print(f"  Soft Filters: {query_result['soft_filters']}")

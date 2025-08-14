@@ -302,7 +302,7 @@ class RAGCLI:
         Returns:
             Dict containing:
             - search_rag: boolean indicating if RAG search should be performed
-            - embedding_source_text: optimized text for vector search
+            - embedding_texts: dict with 'rewrite' and 'hyde' texts for vector search
             - llm_query: refined prompt for LLM generation
         """
         try:
@@ -314,7 +314,13 @@ class RAGCLI:
             
             # Use QueryRewriter for analysis
             result = self.query_rewriter.transform_query(user_input)
-            logger.info(f"Query transformed. RAG: {result['search_rag']}, Embedding: '{result['embedding_source_text'][:50]}...'")
+            
+            # Log with appropriate embedding text for display
+            if result['search_rag'] and 'embedding_texts' in result:
+                embedding_preview = result['embedding_texts']['rewrite'][:50] + "..."
+            else:
+                embedding_preview = "N/A"
+            logger.info(f"Query transformed. RAG: {result['search_rag']}, Embedding: '{embedding_preview}'")
             return result
             
         except Exception as e:
@@ -332,7 +338,10 @@ class RAGCLI:
         
         return {
             'search_rag': search_rag,
-            'embedding_source_text': clean_query,
+            'embedding_texts': {
+                'rewrite': clean_query,
+                'hyde': [clean_query, clean_query, clean_query]
+            },
             'llm_query': user_input,
             'hard_filters': {},
             'negation_filters': {},
@@ -674,8 +683,18 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 use_rag = query_analysis['search_rag']
                 
                 if use_rag:
-                    # Perform RAG search with optimized embedding text and all filter types
-                    embedding_text = query_analysis['embedding_source_text']
+                    # Select appropriate embedding text based on retrieval strategy
+                    retrieval_strategy = self.config_manager.get('rag.retrieval_strategy', 'rewrite')
+                    embedding_texts = query_analysis.get('embedding_texts', {})
+                    
+                    if retrieval_strategy == 'hyde' and 'hyde' in embedding_texts and embedding_texts['hyde']:
+                        # Use first hyde text for backward compatibility
+                        embedding_text = embedding_texts['hyde'][0]
+                    elif 'rewrite' in embedding_texts:
+                        embedding_text = embedding_texts['rewrite']
+                    else:
+                        # Fallback to rewrite text if embedding selection fails
+                        embedding_text = query_analysis.get('embedding_texts', {}).get('rewrite', '')
                     
                     search_display = embedding_text[:DISPLAY_TEXT_TRUNCATE_LENGTH] + "..." if len(embedding_text) > DISPLAY_TEXT_TRUNCATE_LENGTH else embedding_text
                     

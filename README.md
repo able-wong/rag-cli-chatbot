@@ -132,7 +132,7 @@ rag:
 **HyDE Strategy (Semantic - Better Understanding)**:
 ```yaml
 rag:
-  retrieval_strategy: "hyde"  # Generate hypothetical documents for semantic search
+  retrieval_strategy: "hyde"  # Generate 3 multi-persona hypothetical documents for semantic search
   trigger_phrase: "@knowledgebase"
   top_k: 10
   min_score: 0.3
@@ -143,11 +143,45 @@ rag:
 | Strategy | Speed | Best For | Search Method |
 |----------|-------|----------|---------------|
 | **Rewrite** | Fast | Factual queries, keyword matching | `"neural networks training"` |
-| **HyDE** | Slower | Conceptual questions, semantic understanding | `"Neural networks learn through backpropagation..."` |
+| **HyDE** | Slower | Conceptual questions, semantic understanding | 3 perspectives: Professor, Teacher, Student views |
 
 **When to Use:**
 - **Rewrite**: Start here for general use, good performance
 - **HyDE**: Switch if you need better retrieval of conceptually related content
+
+### Multi-Persona HyDE Generation
+
+The HyDE strategy now generates **3 different hypothetical documents** from different expert perspectives for better semantic coverage:
+
+**Science Topics** (AI, machine learning, physics, etc.):
+- **Professor perspective**: Technical, research-focused with advanced terminology
+- **Teacher perspective**: Educational, accessible explanations with examples  
+- **Student perspective**: Learning-focused, discovery-oriented with questions
+
+**Business Topics** (management, strategy, finance, etc.):
+- **Director perspective**: Strategic, high-level decision-making focus
+- **Manager perspective**: Operational, practical implementation approach
+- **Assistant perspective**: Detailed, process-oriented support tasks
+
+**Other Topics**:
+- **Expert perspective**: Authoritative, comprehensive professional knowledge
+- **Educator perspective**: Teaching-focused, well-structured information
+- **Learner perspective**: Curious, exploratory with growth mindset
+
+**Example Multi-Persona Generation for "neural networks"**:
+```
+Professor: "Neural networks utilize backpropagation algorithms for weight optimization..."
+Teacher: "Neural networks learn by adjusting connections between artificial neurons..."
+Student: "I'm studying how neural networks mimic the human brain to recognize patterns..."
+```
+
+**Benefits:**
+- **Enhanced Semantic Coverage**: Multiple viewpoints capture diverse aspects of topics
+- **Improved Retrieval Accuracy**: Matches documents from different conceptual angles
+- **Better Context Understanding**: Covers technical, educational, and practical perspectives
+- **Robust Performance**: Works well across different document types and writing styles
+
+This multi-persona approach is especially effective for complex queries where different documents may approach the same topic from varying expertise levels or professional contexts.
 
 ### Hybrid Search with Intent-Based Patterns
 
@@ -417,9 +451,9 @@ pytest
 ```
 
 **Test Coverage:**
-- **68 unit tests** - Core logic with mocked dependencies  
-- **8 integration tests** - Real LLM provider functionality
-- **Comprehensive coverage** - QueryRewriter, CLI, fallback behavior, edge cases
+- **149 unit tests** - Core logic with mocked dependencies  
+- **59 integration tests** - Real LLM provider functionality including multi-persona HyDE
+- **Comprehensive coverage** - QueryRewriter, CLI, fallback behavior, multi-persona generation, edge cases
 
 ## 🛠️ Development Commands
 
@@ -460,6 +494,7 @@ rag-cli-chatbot/
 │   └── test_cli_mocked.py
 ├── integration_tests/     # Integration tests with real LLM providers
 │   ├── test_query_rewriter_integration.py
+│   ├── test_query_rewriter_multi_persona_hyde.py
 │   ├── test_soft_filtering_integration.py
 │   └── test_cli_integration.py
 ├── main.py               # Application entry point

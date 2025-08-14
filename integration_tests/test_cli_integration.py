@@ -44,7 +44,8 @@ class TestCLIIntegration:
         result = cli._analyze_and_transform_query(rag_query)
         
         assert result['search_rag'] is True, "Should detect RAG trigger"
-        assert len(result['embedding_source_text']) > 0, "Should have embedding text"
+        assert 'embedding_texts' in result, "Should have embedding_texts structure"
+        assert len(result['embedding_texts']['rewrite']) > 0, "Should have rewrite embedding text"
         assert len(result['llm_query']) > 0, "Should have LLM query"
         assert 'context' in result['llm_query'].lower(), "RAG query should reference context"
         
@@ -53,7 +54,8 @@ class TestCLIIntegration:
         result = cli._analyze_and_transform_query(general_query)
         
         assert result['search_rag'] is False, "Should not detect RAG trigger"
-        assert isinstance(result['embedding_source_text'], str), "Should have embedding text field"
+        assert 'embedding_texts' in result, "Should have embedding_texts structure"
+        assert isinstance(result['embedding_texts']['rewrite'], str), "Should have rewrite embedding text field"
         assert len(result['llm_query']) > 0, "Should have LLM query"
         assert 'context' not in result['llm_query'].lower(), "Non-RAG query should not reference context"
         
@@ -86,22 +88,22 @@ class TestCLIIntegration:
             # Test fallback with trigger phrase
             result = cli._analyze_and_transform_query("@knowledgebase What is Python?")
             assert result['search_rag'] is True, "Fallback should detect trigger"
-            assert result['embedding_source_text'] == "What is Python?", "Should clean trigger phrase"
+            assert result['embedding_texts']['rewrite'] == "What is Python?", "Should clean trigger phrase"
             
             # Test fallback without trigger phrase
             result = cli._analyze_and_transform_query("What is Python?")
             assert result['search_rag'] is False, "Fallback should not detect trigger"
-            assert result['embedding_source_text'] == "What is Python?", "Should use original query"
+            assert result['embedding_texts']['rewrite'] == "What is Python?", "Should use original query"
             
             # Test edge case: trigger phrase only (should not trigger RAG)
             result = cli._analyze_and_transform_query("@knowledgebase")
             assert result['search_rag'] is False, "Empty query after trigger should not trigger RAG"
-            assert result['embedding_source_text'] == "", "Should have empty embedding text"
+            assert result['embedding_texts']['rewrite'] == "", "Should have empty embedding text"
             assert result['llm_query'] == "@knowledgebase", "Should preserve original input"
             
             # Test edge case: trigger phrase with only whitespace
             result = cli._analyze_and_transform_query("@knowledgebase   ")
             assert result['search_rag'] is False, "Whitespace-only query after trigger should not trigger RAG"
-            assert result['embedding_source_text'] == "", "Should have empty embedding text after stripping"
+            assert result['embedding_texts']['rewrite'] == "", "Should have empty embedding text after stripping"
         
         print("Fallback behavior working correctly")
