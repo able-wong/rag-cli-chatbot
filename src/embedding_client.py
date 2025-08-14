@@ -52,12 +52,8 @@ class EmbeddingClient:
             
             # Convert dict config to dataclass
             splade_config = None
-            if sparse_config.get('splade'):
-                splade_dict = sparse_config['splade']
-                splade_config = SpladeConfig(
-                    model=splade_dict.get('model', 'naver/splade-cocondenser-ensembledistil'),
-                    device=splade_dict.get('device', 'cpu')
-                )
+            if splade_dict := sparse_config.get('splade'):
+                splade_config = SpladeConfig(**splade_dict)
             
             config_obj = SparseEmbeddingConfig(
                 provider=sparse_config.get('provider', 'splade'),
@@ -186,7 +182,7 @@ class EmbeddingClient:
             # Default fallback
             return 768
     
-    def get_sparse_embedding(self, text: str) -> Optional[Dict[str, List[int]]]:
+    def get_sparse_embedding(self, text: str) -> Optional[Dict[str, Any]]:
         """Generate sparse embedding for the given text."""
         if not self.sparse_provider:
             return None
@@ -197,7 +193,7 @@ class EmbeddingClient:
             logger.error(f"Failed to generate sparse embedding: {e}")
             return None
     
-    def get_sparse_embeddings(self, texts: List[str]) -> Optional[List[Dict[str, List[int]]]]:
+    def get_sparse_embeddings(self, texts: List[str]) -> Optional[List[Dict[str, Any]]]:
         """Generate sparse embeddings for multiple texts."""
         if not self.sparse_provider:
             return None

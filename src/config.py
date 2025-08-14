@@ -7,6 +7,8 @@ class SpladeConfig:
     """Configuration for SPLADE sparse embedding provider."""
     model: str = "naver/splade-cocondenser-ensembledistil"
     device: str = "cpu"
+    max_length: int = 512
+    threshold: float = 0.01
 
 
 @dataclass

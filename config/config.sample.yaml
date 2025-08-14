@@ -163,6 +163,8 @@ sparse_embedding:
   splade:
     model: "naver/splade-cocondenser-ensembledistil"  # Pre-trained SPLADE model
     device: "cpu"                                     # Options: "cpu", "cuda", "mps"
+    max_length: 512                                   # Maximum token length for input texts
+    threshold: 0.01                                   # Threshold for filtering sparse vector values
 
 # ============================================================================
 # SEARCH SERVICE CONFIGURATION (Soft Filtering)

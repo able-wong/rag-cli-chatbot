@@ -8,13 +8,13 @@ class SparseEmbeddingProvider(ABC):
     """Abstract base class for sparse embedding providers."""
 
     @abstractmethod
-    def generate_sparse_embedding(self, text: str) -> Dict[str, List[int]]:
+    def generate_sparse_embedding(self, text: str) -> Dict[str, Any]:
         """Generate sparse embedding for the given text."""
         pass
 
     def generate_sparse_embeddings(
         self, texts: List[str]
-    ) -> List[Dict[str, List[int]]]:
+    ) -> List[Dict[str, Any]]:
         """
         Generate sparse embeddings for multiple texts efficiently.
 
@@ -86,7 +86,7 @@ class SpladeProvider(SparseEmbeddingProvider):
         except Exception as e:
             raise RuntimeError(f"Failed to initialize SPLADE model: {e}")
 
-    def generate_sparse_embedding(self, text: str) -> Dict[str, List[int]]:
+    def generate_sparse_embedding(self, text: str) -> Dict[str, Any]:
         """Generate sparse embedding from text using SPLADE."""
         if not text or not text.strip():
             return {"indices": [], "values": []}
@@ -96,7 +96,7 @@ class SpladeProvider(SparseEmbeddingProvider):
 
             # Tokenize input with truncation and padding
             inputs = self._tokenizer(
-                text, return_tensors="pt", truncation=True, padding=True, max_length=512
+                text, return_tensors="pt", truncation=True, padding=True, max_length=self.config.splade.max_length
             )
 
             # Move to appropriate device
@@ -119,7 +119,7 @@ class SpladeProvider(SparseEmbeddingProvider):
                     sparse_vector = sparse_vector.cpu()
 
                 # Filter to non-zero values with threshold
-                threshold = 0.01
+                threshold = self.config.splade.threshold
                 non_zero_mask = sparse_vector > threshold
                 non_zero_indices = torch.nonzero(non_zero_mask).squeeze().tolist()
 
@@ -143,7 +143,7 @@ class SpladeProvider(SparseEmbeddingProvider):
 
     def generate_sparse_embeddings(
         self, texts: List[str]
-    ) -> List[Dict[str, List[int]]]:
+    ) -> List[Dict[str, Any]]:
         """Generate sparse embeddings for multiple texts efficiently using batch processing."""
         if not texts:
             return []
@@ -168,7 +168,7 @@ class SpladeProvider(SparseEmbeddingProvider):
                 return_tensors="pt",
                 truncation=True,
                 padding=True,
-                max_length=512,
+                max_length=self.config.splade.max_length,
             )
 
             # Move to appropriate device
@@ -191,7 +191,7 @@ class SpladeProvider(SparseEmbeddingProvider):
                     sparse_vectors = sparse_vectors.cpu()
 
                 # Process each sparse vector
-                threshold = 0.01
+                threshold = self.config.splade.threshold
                 results = []
 
                 for sparse_vector in sparse_vectors:
