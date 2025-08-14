@@ -98,7 +98,7 @@ class TestQdrantIntegration:
         # Create payload indexes for filtering
         cls._create_payload_indexes()
         
-        print(f"🔍 Test collection setup complete with payload indexes")
+        print("🔍 Test collection setup complete with payload indexes")
     
     @classmethod
     def _create_payload_indexes(cls):
