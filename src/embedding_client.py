@@ -4,7 +4,7 @@ import warnings
 import os
 import sys
 import contextlib
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import google.generativeai as genai
 from sentence_transformers import SentenceTransformer
 
@@ -32,11 +32,43 @@ def suppress_stdout_stderr():
 logger = logging.getLogger(__name__)
 
 class EmbeddingClient:
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], sparse_config: Optional[Dict[str, Any]] = None):
         self.config = config
         self.provider = config.get('provider', 'ollama')
         self.client = None
+        
+        # Initialize sparse embedding if configuration is provided
+        self.sparse_provider = None
+        if sparse_config:
+            self._initialize_sparse_provider(sparse_config)
+        
         self._initialize_client()
+    
+    def _initialize_sparse_provider(self, sparse_config: Dict[str, Any]):
+        """Initialize the sparse embedding provider if configured."""
+        try:
+            from config import SparseEmbeddingConfig, SpladeConfig
+            from sparse_embedding_providers import create_sparse_embedding_provider
+            
+            # Convert dict config to dataclass
+            splade_config = None
+            if splade_dict := sparse_config.get('splade'):
+                splade_config = SpladeConfig(**splade_dict)
+            
+            config_obj = SparseEmbeddingConfig(
+                provider=sparse_config.get('provider', 'splade'),
+                splade=splade_config
+            )
+            
+            self.sparse_provider = create_sparse_embedding_provider(config_obj)
+            logger.info(f"Initialized sparse embedding provider: {config_obj.provider}")
+            
+        except ImportError as e:
+            logger.warning(f"Sparse embedding dependencies not available: {e}")
+            self.sparse_provider = None
+        except Exception as e:
+            logger.error(f"Failed to initialize sparse embedding provider: {e}")
+            self.sparse_provider = None
     
     def _initialize_client(self):
         """Initialize the embedding client based on provider."""
@@ -149,3 +181,51 @@ class EmbeddingClient:
             
             # Default fallback
             return 768
+    
+    def get_sparse_embedding(self, text: str) -> Optional[Dict[str, Any]]:
+        """Generate sparse embedding for the given text."""
+        if not self.sparse_provider:
+            return None
+        
+        try:
+            return self.sparse_provider.generate_sparse_embedding(text)
+        except Exception as e:
+            logger.error(f"Failed to generate sparse embedding: {e}")
+            return None
+    
+    def get_sparse_embeddings(self, texts: List[str]) -> Optional[List[Dict[str, Any]]]:
+        """Generate sparse embeddings for multiple texts."""
+        if not self.sparse_provider:
+            return None
+        
+        try:
+            return self.sparse_provider.generate_sparse_embeddings(texts)
+        except Exception as e:
+            logger.error(f"Failed to generate sparse embeddings: {e}")
+            return None
+    
+    def has_sparse_embedding(self) -> bool:
+        """Check if sparse embedding is available."""
+        return self.sparse_provider is not None
+    
+    def test_sparse_connection(self) -> bool:
+        """Test if sparse embedding provider is working."""
+        if not self.sparse_provider:
+            return False
+        
+        try:
+            return self.sparse_provider.test_connection()
+        except Exception as e:
+            logger.error(f"Sparse embedding connection test failed: {e}")
+            return False
+    
+    def get_sparse_info(self) -> Optional[Dict[str, Any]]:
+        """Get information about the sparse embedding provider."""
+        if not self.sparse_provider:
+            return None
+        
+        try:
+            return self.sparse_provider.get_info()
+        except Exception as e:
+            logger.error(f"Failed to get sparse embedding info: {e}")
+            return None
