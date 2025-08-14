@@ -90,7 +90,7 @@ Always respond with valid JSON only."""
         Returns:
             Dict containing:
             - search_rag: boolean indicating if RAG search should be performed
-            - embedding_source_text: optimized text for vector search
+            - embedding_texts: dict with 'rewrite' and 'hyde' texts for vector search
             - llm_query: refined prompt for LLM generation
         """
         try:
@@ -114,13 +114,6 @@ Always respond with valid JSON only."""
             # Convert structured llm_query to final, ready-to-use prompt
             validated_result['llm_query'] = self._build_final_llm_query(validated_result['llm_query'])
             
-            # Add backward compatibility field
-            if 'embedding_texts' in validated_result:
-                if self.retrieval_strategy == 'hyde' and 'hyde' in validated_result['embedding_texts']:
-                    # Use first hyde text for backward compatibility
-                    validated_result['embedding_source_text'] = validated_result['embedding_texts']['hyde'][0]
-                elif 'rewrite' in validated_result['embedding_texts']:
-                    validated_result['embedding_source_text'] = validated_result['embedding_texts']['rewrite']
             
             # Add source indicator (only if not already set by fallback)
             if 'source' not in validated_result:
@@ -158,7 +151,7 @@ Format your response clearly with the sections above."""
         Returns:
             Validated result dictionary
         """
-        # Check required fields - embedding_texts is now required, embedding_source_text for fallback
+        # Check required fields - embedding_texts is now required
         required_fields = ['search_rag', 'llm_query']
         for field in required_fields:
             if field not in result:
@@ -199,16 +192,27 @@ Format your response clearly with the sections above."""
                 logger.warning("embedding_texts.rewrite is required for RAG queries")
                 return self._create_fallback_result(original_query)
             
-            # Validate hyde texts array
-            if 'hyde' not in embedding_texts or not isinstance(embedding_texts['hyde'], list) or len(embedding_texts['hyde']) != 3:
-                logger.warning("embedding_texts.hyde must be an array of 3 strings")
+            # Validate and clean hyde texts array
+            if 'hyde' not in embedding_texts or not isinstance(embedding_texts['hyde'], list):
+                logger.warning("embedding_texts.hyde must be an array")
                 return self._create_fallback_result(original_query)
             
-            # Validate each hyde text
+            # Filter out empty/invalid hyde texts and keep only valid ones
+            valid_hyde_texts = []
             for i, hyde_text in enumerate(embedding_texts['hyde']):
-                if not isinstance(hyde_text, str) or not hyde_text.strip():
-                    logger.warning(f"embedding_texts.hyde[{i}] must be a non-empty string")
-                    return self._create_fallback_result(original_query)
+                if isinstance(hyde_text, str) and hyde_text.strip():
+                    valid_hyde_texts.append(hyde_text.strip())
+                else:
+                    logger.debug(f"Filtering out empty/invalid hyde text at index {i}")
+            
+            # Require at least one valid hyde text for RAG queries
+            if len(valid_hyde_texts) == 0:
+                logger.warning("No valid hyde texts generated, falling back")
+                return self._create_fallback_result(original_query)
+            
+            # Update with cleaned hyde texts
+            embedding_texts['hyde'] = valid_hyde_texts
+            logger.debug(f"Using {len(valid_hyde_texts)} valid hyde texts out of {len(embedding_texts.get('hyde', []))}")
         
         # Validate llm_query is not empty
         if not isinstance(result['llm_query'], str) or not result['llm_query'].strip():
@@ -251,7 +255,6 @@ Format your response clearly with the sections above."""
         
         fallback_result = {
             'search_rag': search_rag,
-            'embedding_source_text': clean_query,
             'embedding_texts': {
                 'rewrite': clean_query,
                 'hyde': [clean_query, clean_query, clean_query]
@@ -285,7 +288,7 @@ Format your response clearly with the sections above."""
                 # Also check embedding_texts structure
                 embedding_texts = result.get('embedding_texts', {})
                 if ('rewrite' in embedding_texts and 'hyde' in embedding_texts and 
-                    isinstance(embedding_texts['hyde'], list) and len(embedding_texts['hyde']) == 3 and
+                    isinstance(embedding_texts['hyde'], list) and len(embedding_texts['hyde']) >= 1 and
                     result['source'] == 'llm'):
                     logger.info("QueryRewriter connection test successful")
                     return True
