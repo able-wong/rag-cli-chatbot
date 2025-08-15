@@ -236,11 +236,13 @@ The system automatically detects three distinct query patterns based on user int
 
 **Three-Filter System:**
 
-| Filter Type | Keywords | Behavior | Example |
-|------------|----------|----------|---------|
-| **Hard Filters** | "only", "exclusively", "strictly", "limited to" | Must match (excludes non-matching) | `papers ONLY from 2024` |
-| **Negation Filters** | "not from", "excluding", "except", "without" | Must NOT match (excludes matching) | `research not by Johnson` |  
+| Filter Type | Intent Detection | Behavior | Example |
+|------------|------------------|----------|---------|
+| **Hard Filters** | Restrictive intent: "only", "exclusively", "just", "must be", "limited to", "solely" | Must match (excludes non-matching) | `papers only from 2024` |
+| **Negation Filters** | Exclusion intent: "not", "without", "except", "excluding", "avoid", "skip" | Must NOT match (excludes matching) | `research not by Johnson` |  
 | **Soft Filters** | All other metadata mentions | Boost if match (doesn't exclude) | `papers by Smith about AI` |
+
+**Key Innovation**: Uses **intent-based detection** rather than exact keyword matching, supporting natural language variations like `"only authored by Smith"` being correctly detected as a hard filter.
 
 **Natural Language Metadata Examples:**
 
@@ -401,21 +403,38 @@ source venv/bin/activate
 
 ### Integration Tests
 
-To run integration tests with real LLM providers (requires valid config):
-
+**Full Integration Test Suite** (slow, >4 mins):
 ```bash
 # Ensure config/config.yaml is properly configured with real API keys
 source venv/bin/activate
 
-# Run integration tests
+# Run all integration tests
 ./doit.sh integration-test
-# OR directly: pytest integration_tests/ -m integration
+# OR directly: pytest integration_tests/
+```
+
+**Specific Integration Tests** (faster, targeted testing):
+```bash
+source venv/bin/activate
+
+# Intent-based filtering & query cleaning
+pytest integration_tests/test_query_rewriter_integration.py -v
+
+# HyDE multi-persona functionality  
+pytest integration_tests/test_query_rewriter_multi_persona_hyde.py -v
+
+# Vector database operations
+pytest integration_tests/test_qdrant_integration.py -v
+
+# CLI workflow testing
+pytest integration_tests/test_cli_integration.py -v
 ```
 
 **Integration Test Requirements:**
 - Valid `config/config.yaml` with working LLM provider settings
 - Internet connection for cloud LLM providers (Gemini)
 - Proper API keys configured
+- **Uses ConfigManager**: Properly handles environment variables like `GEMINI_API_KEY`
 
 ### Query Pattern Testing
 
@@ -424,12 +443,12 @@ Test how the query rewriter transforms different patterns:
 ```bash
 source venv/bin/activate
 
-# Test different query patterns  
-python check_query_rewriter.py '@knowledgebase what is machine learning'
-python check_query_rewriter.py 'search @knowledgebase on AI research'
-python check_query_rewriter.py '@knowledgebase find papers by Smith and summarize'
+# Using doit.sh command (recommended)
+./doit.sh check-query-rewriter '@knowledgebase what is machine learning'
+./doit.sh check-query-rewriter 'search @knowledgebase on AI research'
+./doit.sh check-query-rewriter '@knowledgebase find papers by Smith and summarize'
 
-# Test with different strategies
+# Direct usage with different strategies
 RAG_STRATEGY=hyde python check_query_rewriter.py '@knowledgebase explain neural networks'
 RAG_STRATEGY=rewrite python check_query_rewriter.py 'search @knowledgebase on Python'
 ```
@@ -469,6 +488,14 @@ Available commands:
 - `integration-test`: Runs integration tests with real LLM providers (requires valid config.yaml).
 - `lint`: Runs the `ruff` linter without applying fixes.
 - `lint-fix`: Runs the `ruff` linter and attempts to auto-fix issues.
+- `check-query-rewriter 'query'`: Test query rewriter with a specific query to see pattern detection and filter extraction.
+
+**Examples:**
+```bash
+./doit.sh test
+./doit.sh lint-fix
+./doit.sh check-query-rewriter 'search @knowledgebase on AI, only by Smith'
+```
 
 ## 📁 Project Structure
 

@@ -48,13 +48,23 @@ class QueryRewriter:
   * Business topics: Director/Manager/Assistant views
   * Other topics: Expert/Educator/Learner views
 
-**FILTER RULES** (only when "{self.trigger_phrase}" present):
-- **Soft filters**: DEFAULT for ALL mentions (authors, dates, tags) - "papers by Smith", "from 2024"
-- **Hard filters**: ONLY explicit restrictions ("papers ONLY from 2024", "exclusively by Smith")
-- **Negation filters**: ONLY clear negations ("not from Smith", "excluding 2024")
-- **Empty filters**: For pure questions without search intent
+**FILTER FIELDS** (only when "{self.trigger_phrase}" present):
+Supported filterable fields: author, tags, publication_date
 
-KEY RULE: Everything goes to soft_filters unless explicitly restrictive or negated.
+**FILTER TYPES**:
+- **Soft filters**: DEFAULT for ALL mentions - boost relevance but don't exclude ("papers by Smith", "from 2024", "tagged Python")
+- **Hard filters**: Restrictive intent requiring exclusive matching - detect words/phrases expressing limitation (examples: 'only', 'just', 'exclusively', 'must be', 'restrict to', 'limited to', 'solely')
+- **Negation filters**: Exclusion intent to avoid criteria - detect words/phrases expressing avoidance (examples: 'not', 'without', 'except', 'excluding', 'avoid', 'skip')
+- **Empty filters**: Pure questions without search intent
+
+KEY RULE: Use intent-based detection, not exact keyword matching. Everything goes to soft_filters unless expressing clear restrictive or exclusion intent.
+
+**LLM QUERY CLEANING**:
+- Remove search instructions ("find", "search", "look for", "retrieve", "get", "show", "list")
+- Remove filter clauses for FILTER FIELDS above (author restrictions, date limits, tag filters)
+- Remove trigger phrase ("{self.trigger_phrase}")
+- Transform into clean question format: "Based on the provided context, explain/analyze/describe [core topic]"
+- Exception: Pure search queries (see PATTERNS below) → use "SEARCH_SUMMARY_MODE"
 
 **PATTERNS**:
 1. Pure search: "find papers by Smith" → SEARCH_SUMMARY_MODE + extract filters
