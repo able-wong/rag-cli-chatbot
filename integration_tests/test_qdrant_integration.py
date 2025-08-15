@@ -1220,3 +1220,192 @@ class TestQdrantIntegration:
         assert result_doc_names == expected_doc_names, f"Expected {expected_doc_names}, got {result_doc_names}"
         
         print(f"✅ Multiple negation filters test passed: Found {len(results)} documents")
+
+    # ========================================
+    # HYBRID SEARCH INTEGRATION TESTS
+    # ========================================
+
+    @pytest.mark.integration
+    def test_hybrid_search_with_metadata_and_negation_filters(self):
+        """Test hybrid search with both metadata filters and negation filters using real Qdrant."""
+        # Generate mock dense and sparse vectors for testing
+        import random
+        random.seed(456)  # Different seed for hybrid search vectors
+        
+        # Create multiple dense vectors (simulating keywords + HyDE personas)
+        dense_vectors = []
+        for i in range(2):
+            vector = [random.uniform(-1, 1) for _ in range(384)]
+            magnitude = sum(x * x for x in vector) ** 0.5
+            dense_vectors.append([x / magnitude for x in vector])
+        
+        # Create sparse vector (simulating keyword-based sparse embedding)
+        sparse_indices = random.sample(range(384), 50)  # 50 non-zero indices
+        sparse_values = [random.uniform(0.1, 1.0) for _ in range(50)]
+        sparse_vector = {
+            "indices": sparse_indices,
+            "values": sparse_values
+        }
+        
+        # Test 1: Hybrid search with positive filters (should match doc1, doc7 by John Smith with python)
+        filters = {"author": "John Smith", "tags": ["python"]}
+        results = self.qdrant_db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=10,
+            filters=filters
+        )
+        
+        # Validate positive filter results
+        assert len(results) == 2, f"Should find 2 documents by John Smith with python tag, got {len(results)}"
+        
+        result_doc_names = {result.payload["doc_name"] for result in results}
+        expected_doc_names = {"doc1", "doc7"}
+        assert result_doc_names == expected_doc_names, f"Expected {expected_doc_names}, got {result_doc_names}"
+        
+        # Verify all results match the filters
+        for result in results:
+            assert result.payload["author"] == "John Smith"
+            assert "python" in result.payload["tags"]
+            
+        print(f"✅ Hybrid search with positive filters test passed: Found {len(results)} documents")
+        
+        # Test 2: Hybrid search with negation filters (exclude John Smith)
+        negation_filters = {"author": "John Smith"}
+        results = self.qdrant_db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=10,
+            negation_filters=negation_filters
+        )
+        
+        # Should find documents NOT by John Smith (doc2, doc4, doc5, doc6, doc8)
+        assert len(results) == 5, f"Should find 5 documents NOT by John Smith, got {len(results)}"
+        
+        # Verify none of the results are by John Smith
+        for result in results:
+            assert result.payload["author"] != "John Smith", f"Found John Smith in negation results: {result.payload}"
+        
+        expected_doc_names = {"doc2", "doc4", "doc5", "doc6", "doc8"}
+        result_doc_names = {result.payload["doc_name"] for result in results}
+        assert result_doc_names == expected_doc_names, f"Expected {expected_doc_names}, got {result_doc_names}"
+        
+        print(f"✅ Hybrid search with negation filters test passed: Found {len(results)} documents")
+        
+        # Test 3: Hybrid search with both positive and negation filters
+        # Find documents from 2024 that are NOT by Jane Doe (should match doc4, doc5, doc8)
+        filters = {"publication_date": "2024"}
+        negation_filters = {"author": "Jane Doe"}
+        results = self.qdrant_db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=10,
+            filters=filters,
+            negation_filters=negation_filters
+        )
+        
+        # Validate combined filter results
+        assert len(results) == 3, f"Should find 3 documents from 2024 NOT by Jane Doe, got {len(results)}"
+        
+        # Verify all results match both criteria
+        for result in results:
+            pub_date = result.payload["publication_date"]
+            author = result.payload["author"]
+            assert pub_date.startswith("2024"), f"Should be from 2024, got {pub_date}"
+            assert author != "Jane Doe", f"Should not be by Jane Doe, got {author}"
+        
+        expected_doc_names = {"doc4", "doc5", "doc8"}
+        result_doc_names = {result.payload["doc_name"] for result in results}
+        assert result_doc_names == expected_doc_names, f"Expected {expected_doc_names}, got {result_doc_names}"
+        
+        print(f"✅ Hybrid search with combined filters test passed: Found {len(results)} documents")
+        
+        # Test 4: Hybrid search without filters (baseline)
+        baseline_results = self.qdrant_db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=10
+        )
+        
+        # Should return all 8 documents
+        assert len(baseline_results) == 8, f"Should find all 8 documents without filters, got {len(baseline_results)}"
+        
+        # Results should be ordered by RRF fusion score
+        for i in range(len(baseline_results) - 1):
+            assert baseline_results[i].score >= baseline_results[i + 1].score, "Results should be ordered by decreasing score"
+        
+        print(f"✅ Hybrid search baseline test passed: Found all {len(baseline_results)} documents")
+
+    @pytest.mark.integration
+    def test_hybrid_search_dense_only_fallback(self):
+        """Test hybrid search fallback when sparse vector is invalid."""
+        import random
+        random.seed(789)
+        
+        # Create dense vector
+        vector = [random.uniform(-1, 1) for _ in range(384)]
+        magnitude = sum(x * x for x in vector) ** 0.5
+        dense_vectors = [[x / magnitude for x in vector]]
+        
+        # Invalid sparse vector (empty indices)
+        sparse_vector = {"indices": [], "values": []}
+        
+        results = self.qdrant_db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=5,
+            filters={"author": "John Smith"}
+        )
+        
+        # Should still work with dense-only search and return John Smith's documents
+        assert len(results) == 3, f"Should find 3 documents by John Smith even with invalid sparse vector, got {len(results)}"
+        
+        for result in results:
+            assert result.payload["author"] == "John Smith"
+        
+        print(f"✅ Hybrid search dense-only fallback test passed: Found {len(results)} documents")
+
+    @pytest.mark.integration  
+    def test_hybrid_search_score_threshold(self):
+        """Test hybrid search with score threshold parameter."""
+        import random
+        random.seed(101112)
+        
+        # Create dense vectors
+        dense_vectors = []
+        for i in range(1):
+            vector = [random.uniform(-1, 1) for _ in range(384)]
+            magnitude = sum(x * x for x in vector) ** 0.5
+            dense_vectors.append([x / magnitude for x in vector])
+        
+        # Create minimal sparse vector
+        sparse_vector = {"indices": [0, 1, 2], "values": [0.1, 0.2, 0.3]}
+        
+        # Get baseline results to determine score range
+        baseline_results = self.qdrant_db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=10
+        )
+        
+        if len(baseline_results) > 2:
+            # Use middle score as threshold
+            threshold = baseline_results[2].score
+            
+            filtered_results = self.qdrant_db.hybrid_search(
+                dense_vectors=dense_vectors,
+                sparse_vector=sparse_vector,
+                limit=10,
+                score_threshold=threshold
+            )
+            
+            # Should have fewer or equal results due to score threshold
+            assert len(filtered_results) <= len(baseline_results), "Score threshold should reduce or maintain result count"
+            
+            # All results should meet the threshold
+            for result in filtered_results:
+                assert result.score >= threshold, f"Result score {result.score} should be >= threshold {threshold}"
+            
+            print(f"✅ Hybrid search score threshold test passed: {len(filtered_results)} results above threshold")
+        else:
+            print("⚠️ Hybrid search score threshold test skipped: insufficient baseline results")

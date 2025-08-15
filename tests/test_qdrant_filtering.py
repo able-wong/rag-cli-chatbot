@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from qdrant_db import QdrantDB
-from qdrant_client.models import Filter
+from qdrant_client.models import Filter, FusionQuery, Fusion
 
 def create_mock_qdrant_client(collection_exists=False):
     """Create a mock Qdrant client for testing."""
@@ -360,3 +360,283 @@ def test_backward_compatibility_with_legacy_search(mock_qdrant_client_class):
         mock_client.search.assert_called_once()
         call_args = mock_client.search.call_args[1]
         assert 'query_filter' not in call_args
+
+
+# ========================================
+# HYBRID SEARCH TESTS
+# ========================================
+
+@patch('qdrant_db.QdrantClient')
+def test_hybrid_search_basic_functionality(mock_qdrant_client_class):
+    """Test basic hybrid search functionality with dense and sparse vectors."""
+    mock_client = create_mock_qdrant_client(collection_exists=True)
+    
+    # Mock query_points response
+    mock_response = Mock()
+    mock_response.points = [Mock(id=1, score=0.9, payload={"title": "Test Doc"})]
+    mock_client.query_points.return_value = mock_response
+    
+    mock_qdrant_client_class.return_value = mock_client
+    
+    config = {'host': 'localhost', 'port': 6333, 'collection_name': 'test'}
+    db = QdrantDB(config)
+    
+    with patch.object(db, 'collection_exists', return_value=True):
+        dense_vectors = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+        sparse_vector = {"indices": [0, 1, 2], "values": [0.1, 0.2, 0.3]}
+        
+        results = db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=5
+        )
+        
+        # Verify query_points was called
+        mock_client.query_points.assert_called_once()
+        call_args = mock_client.query_points.call_args[1]
+        
+        # Check prefetch queries were created correctly
+        assert 'prefetch' in call_args
+        prefetch_queries = call_args['prefetch']
+        assert len(prefetch_queries) == 3  # 2 dense + 1 sparse
+        
+        # Check RRF fusion query
+        assert 'query' in call_args
+        fusion_query = call_args['query']
+        assert isinstance(fusion_query, FusionQuery)
+        assert fusion_query.fusion == Fusion.RRF
+        
+        # Check results
+        assert len(results) == 1
+        assert results[0].score == 0.9
+
+
+@patch('qdrant_db.QdrantClient')
+def test_hybrid_search_dense_only_fallback(mock_qdrant_client_class):
+    """Test hybrid search with invalid sparse vector falls back to dense only."""
+    mock_client = create_mock_qdrant_client(collection_exists=True)
+    
+    mock_response = Mock()
+    mock_response.points = []
+    mock_client.query_points.return_value = mock_response
+    
+    mock_qdrant_client_class.return_value = mock_client
+    
+    config = {'host': 'localhost', 'port': 6333, 'collection_name': 'test'}
+    db = QdrantDB(config)
+    
+    with patch.object(db, 'collection_exists', return_value=True):
+        dense_vectors = [[0.1, 0.2, 0.3]]
+        sparse_vector = {"indices": [], "values": []}  # Invalid sparse vector
+        
+        db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=5
+        )
+        
+        # Should still call query_points but only with dense vectors
+        mock_client.query_points.assert_called_once()
+        call_args = mock_client.query_points.call_args[1]
+        
+        prefetch_queries = call_args['prefetch']
+        assert len(prefetch_queries) == 1  # Only dense vector
+
+
+@patch('qdrant_db.QdrantClient')
+def test_hybrid_search_with_filters(mock_qdrant_client_class):
+    """Test hybrid search with metadata and negation filters."""
+    mock_client = create_mock_qdrant_client(collection_exists=True)
+    
+    mock_response = Mock()
+    mock_response.points = []
+    mock_client.query_points.return_value = mock_response
+    
+    mock_qdrant_client_class.return_value = mock_client
+    
+    config = {'host': 'localhost', 'port': 6333, 'collection_name': 'test'}
+    db = QdrantDB(config)
+    
+    with patch.object(db, 'collection_exists', return_value=True):
+        dense_vectors = [[0.1, 0.2, 0.3]]
+        sparse_vector = {"indices": [0, 1], "values": [0.1, 0.2]}
+        filters = {"author": "John Smith"}
+        negation_filters = {"tags": ["exclude"]}
+        
+        db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=5,
+            filters=filters,
+            negation_filters=negation_filters
+        )
+        
+        mock_client.query_points.assert_called_once()
+        call_args = mock_client.query_points.call_args[1]
+        
+        # Check that filters were applied to prefetch queries
+        prefetch_queries = call_args['prefetch']
+        for prefetch in prefetch_queries:
+            assert hasattr(prefetch, 'filter')
+            assert prefetch.filter is not None
+
+
+@patch('qdrant_db.QdrantClient')
+def test_hybrid_search_error_fallback(mock_qdrant_client_class):
+    """Test hybrid search error handling with fallback to regular search."""
+    mock_client = create_mock_qdrant_client(collection_exists=True)
+    
+    # Mock query_points to fail
+    mock_client.query_points.side_effect = Exception("Hybrid search error")
+    
+    # Mock regular search to succeed
+    mock_client.search.return_value = [Mock(id=1, score=0.8)]
+    
+    mock_qdrant_client_class.return_value = mock_client
+    
+    config = {'host': 'localhost', 'port': 6333, 'collection_name': 'test'}
+    db = QdrantDB(config)
+    
+    with patch.object(db, 'collection_exists', return_value=True):
+        dense_vectors = [[0.1, 0.2, 0.3]]
+        sparse_vector = {"indices": [0], "values": [0.1]}
+        
+        results = db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=5
+        )
+        
+        # Should have attempted query_points and fallen back to search
+        mock_client.query_points.assert_called_once()
+        mock_client.search.assert_called_once()
+        
+        # Should return fallback results
+        assert len(results) == 1
+        assert results[0].score == 0.8
+
+
+@patch('qdrant_db.QdrantClient')
+def test_hybrid_search_no_dense_vectors(mock_qdrant_client_class):
+    """Test hybrid search with no dense vectors returns empty list."""
+    mock_client = create_mock_qdrant_client(collection_exists=True)
+    mock_qdrant_client_class.return_value = mock_client
+    
+    config = {'host': 'localhost', 'port': 6333, 'collection_name': 'test'}
+    db = QdrantDB(config)
+    
+    with patch.object(db, 'collection_exists', return_value=True):
+        dense_vectors = []  # No dense vectors
+        sparse_vector = {"indices": [0], "values": [0.1]}
+        
+        results = db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=5
+        )
+        
+        # Should return empty list without calling query_points
+        assert results == []
+        mock_client.query_points.assert_not_called()
+
+
+@patch('qdrant_db.QdrantClient')
+def test_hybrid_search_collection_not_exists(mock_qdrant_client_class):
+    """Test hybrid search when collection doesn't exist."""
+    mock_client = create_mock_qdrant_client(collection_exists=False)
+    mock_qdrant_client_class.return_value = mock_client
+    
+    config = {'host': 'localhost', 'port': 6333, 'collection_name': 'test'}
+    db = QdrantDB(config)
+    
+    with patch.object(db, 'collection_exists', return_value=False):
+        dense_vectors = [[0.1, 0.2, 0.3]]
+        sparse_vector = {"indices": [0], "values": [0.1]}
+        
+        results = db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=5
+        )
+        
+        # Should return empty list
+        assert results == []
+        mock_client.query_points.assert_not_called()
+
+
+@patch('qdrant_db.QdrantClient')
+def test_hybrid_search_score_threshold(mock_qdrant_client_class):
+    """Test hybrid search with score threshold parameter."""
+    mock_client = create_mock_qdrant_client(collection_exists=True)
+    
+    mock_response = Mock()
+    mock_response.points = []
+    mock_client.query_points.return_value = mock_response
+    
+    mock_qdrant_client_class.return_value = mock_client
+    
+    config = {'host': 'localhost', 'port': 6333, 'collection_name': 'test'}
+    db = QdrantDB(config)
+    
+    with patch.object(db, 'collection_exists', return_value=True):
+        dense_vectors = [[0.1, 0.2, 0.3]]
+        sparse_vector = {"indices": [0], "values": [0.1]}
+        score_threshold = 0.7
+        
+        db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=5,
+            score_threshold=score_threshold
+        )
+        
+        mock_client.query_points.assert_called_once()
+        call_args = mock_client.query_points.call_args[1]
+        
+        # Check score threshold was passed
+        assert 'score_threshold' in call_args
+        assert call_args['score_threshold'] == 0.7
+
+
+@patch('qdrant_db.QdrantClient')
+def test_hybrid_search_prefetch_configuration(mock_qdrant_client_class):
+    """Test that prefetch queries are configured correctly."""
+    mock_client = create_mock_qdrant_client(collection_exists=True)
+    
+    mock_response = Mock()
+    mock_response.points = []
+    mock_client.query_points.return_value = mock_response
+    
+    mock_qdrant_client_class.return_value = mock_client
+    
+    config = {'host': 'localhost', 'port': 6333, 'collection_name': 'test'}
+    db = QdrantDB(config)
+    
+    with patch.object(db, 'collection_exists', return_value=True):
+        dense_vectors = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+        sparse_vector = {"indices": [0, 1, 2], "values": [0.1, 0.2, 0.3]}
+        limit = 5
+        
+        db.hybrid_search(
+            dense_vectors=dense_vectors,
+            sparse_vector=sparse_vector,
+            limit=limit
+        )
+        
+        mock_client.query_points.assert_called_once()
+        call_args = mock_client.query_points.call_args[1]
+        
+        prefetch_queries = call_args['prefetch']
+        
+        # Verify dense vector prefetches
+        dense_prefetches = [p for p in prefetch_queries if hasattr(p, 'using') and p.using == 'dense']
+        assert len(dense_prefetches) == 2
+        
+        for prefetch in dense_prefetches:
+            assert prefetch.limit == limit * 2  # Should fetch 2x for better RRF
+        
+        # Verify sparse vector prefetch
+        sparse_prefetches = [p for p in prefetch_queries if hasattr(p, 'using') and p.using == 'sparse']
+        assert len(sparse_prefetches) == 1
+        sparse_prefetch = sparse_prefetches[0]
+        assert sparse_prefetch.limit == limit * 2

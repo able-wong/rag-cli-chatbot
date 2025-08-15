@@ -1,7 +1,7 @@
 import logging
 from typing import List, Dict, Any, Optional
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, ScoredPoint, Filter, FieldCondition, MatchValue, MatchAny, DatetimeRange
+from qdrant_client.models import Distance, VectorParams, PointStruct, ScoredPoint, Filter, FieldCondition, MatchValue, MatchAny, DatetimeRange, Prefetch, FusionQuery, Fusion, SparseVector
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +142,117 @@ class QdrantDB:
             
         except Exception as e:
             logger.error(f"Search failed: {e}")
+            return []
+
+    def hybrid_search(
+        self,
+        dense_vectors: List[List[float]],  # Keywords + HyDE personas
+        sparse_vector: Dict[str, List[int]],  # Keywords only: {"indices": [...], "values": [...]}
+        limit: int = 5,
+        score_threshold: Optional[float] = None,
+        filters: Optional[Dict[str, Any]] = None,
+        negation_filters: Optional[Dict[str, Any]] = None
+    ) -> List[ScoredPoint]:
+        """
+        Perform hybrid search using Qdrant's native RRF fusion with dense and sparse vectors.
+        
+        Args:
+            dense_vectors: List of dense embeddings (keywords + HyDE personas)
+            sparse_vector: Sparse vector dictionary with indices and values
+            limit: Maximum number of results to return
+            score_threshold: Minimum similarity score threshold
+            filters: Dictionary of positive filters (must match)
+            negation_filters: Dictionary of negation filters (must NOT match)
+        
+        Returns:
+            List of ScoredPoint objects ranked by RRF fusion
+        """
+        try:
+            if not self.collection_exists():
+                logger.warning(f"Collection '{self.collection_name}' does not exist")
+                return []
+            
+            # Check if we have any vectors to search with
+            if not dense_vectors:
+                logger.warning("No dense vectors provided for hybrid search")
+                return []
+            
+            # Build prefetch queries for all dense vectors
+            prefetch_queries = []
+            
+            # Add dense vector prefetches (keywords + HyDE personas)
+            for i, dense_vector in enumerate(dense_vectors):
+                prefetch_queries.append(
+                    Prefetch(
+                        query=dense_vector,
+                        using="dense",
+                        limit=limit * 2  # Fetch more for better RRF fusion
+                    )
+                )
+            
+            # Add sparse vector prefetch if provided
+            if sparse_vector and sparse_vector.get("indices") and sparse_vector.get("values"):
+                sparse_query = SparseVector(
+                    indices=sparse_vector["indices"],
+                    values=sparse_vector["values"]
+                )
+                prefetch_queries.append(
+                    Prefetch(
+                        query=sparse_query,
+                        using="sparse",
+                        limit=limit * 2
+                    )
+                )
+                logger.info(f"Added sparse vector to hybrid search with {len(sparse_vector['indices'])} dimensions")
+            else:
+                logger.warning("Sparse vector not provided or invalid, using dense-only hybrid search")
+            
+            # Build query parameters
+            query_params = {
+                "collection_name": self.collection_name,
+                "prefetch": prefetch_queries,
+                "query": FusionQuery(fusion=Fusion.RRF),
+                "limit": limit,
+                "with_payload": True
+            }
+            
+            if score_threshold is not None:
+                query_params["score_threshold"] = score_threshold
+            
+            # Build combined filter with both positive and negative conditions
+            if filters or negation_filters:
+                qdrant_filter = self._build_combined_filter(filters, negation_filters)
+                if qdrant_filter:
+                    # Apply filter to all prefetch queries
+                    for prefetch in prefetch_queries:
+                        prefetch.filter = qdrant_filter
+                        
+                    # Log applied filters
+                    applied_filters = []
+                    if filters:
+                        applied_filters.extend([f"+{k}" for k in filters.keys()])
+                    if negation_filters:
+                        applied_filters.extend([f"-{k}" for k in negation_filters.keys()])
+                    logger.info(f"Applied hybrid search filters: {applied_filters}")
+            
+            # Perform hybrid search with RRF fusion
+            results = self.client.query_points(**query_params).points
+            
+            logger.info(f"Hybrid search found {len(results)} results using RRF fusion with {len(dense_vectors)} dense vectors")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Hybrid search failed: {e}")
+            # Graceful fallback: try with first dense vector only if hybrid fails
+            if dense_vectors:
+                logger.info("Falling back to single dense vector search")
+                return self.search(
+                    query_vector=dense_vectors[0],
+                    limit=limit,
+                    score_threshold=score_threshold,
+                    filters=filters,
+                    negation_filters=negation_filters
+                )
             return []
     
     def scroll_collection(self, limit: int = 10) -> List[PointStruct]:
