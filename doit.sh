@@ -26,8 +26,28 @@ case "$1" in
         echo "Running linter (ruff) and applying fixes..."
         ruff check . --fix --exclude venv
         ;;
+    check-query-rewriter)
+        if [ -z "$2" ]; then
+            echo "Usage: ./doit.sh check-query-rewriter 'your query here'"
+            echo "Example: ./doit.sh check-query-rewriter 'search @knowledgebase on AI, only by Smith'"
+            exit 1
+        fi
+        echo "Testing QueryRewriter with query: $2"
+        python check_query_rewriter.py "$2"
+        ;;
     *)
-        echo "Usage: ./doit.sh {test|integration-test|lint|lint-fix}"
+        echo "Usage: ./doit.sh {test|integration-test|lint|lint-fix|check-query-rewriter}"
+        echo ""
+        echo "Commands:"
+        echo "  test                      Run unit tests"
+        echo "  integration-test          Run integration tests (need working config.yaml)"
+        echo "  lint                      Run linter check"
+        echo "  lint-fix                  Run linter and apply fixes"
+        echo "  check-query-rewriter      Test query rewriter with a specific query"
+        echo ""
+        echo "Examples:"
+        echo "  ./doit.sh test"
+        echo "  ./doit.sh check-query-rewriter 'search @knowledgebase on AI, only by Smith'"
         exit 1
         ;;
 esac
