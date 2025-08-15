@@ -47,7 +47,12 @@ After completing a requested task (e.g., code modification, file operation), you
 
 ## Integration Tests
 
-- There is an integration test suite that could be triggered by running `./doit.sh integration-test` but ask the user first since it incurs API costs.
+- **Full suite**: `./doit.sh integration-test` - Runs all integration tests but is slow (>4 mins) and incurs API costs. Ask user first.
+- **Specific tests**: Run only necessary integration test cases when possible for faster feedback:
+  - `pytest integration_tests/test_query_rewriter_integration.py -v` - Intent-based filtering & query cleaning
+  - `pytest integration_tests/test_query_rewriter_multi_persona_hyde.py -v` - HyDE multi-persona functionality  
+  - `pytest integration_tests/test_qdrant_integration.py -v` - Vector database operations
+  - `pytest integration_tests/test_cli_integration.py -v` - CLI workflow testing
 - **Important**: Integration tests must use `ConfigManager` for configuration loading to properly handle environment variables (like `GEMINI_API_KEY`). If the chatbot app works, integration tests should work too.
 - Integration tests that fail to connect should skip gracefully with appropriate messages.
 
