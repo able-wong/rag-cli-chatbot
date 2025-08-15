@@ -375,8 +375,7 @@ class TestSoftFilteringIntegration:
         assert self.validate_three_filter_structure(query_result), "Query transformation failed"
         assert query_result['search_rag'] is True, "Should trigger RAG search"
         
-        # Step 2: Setup mock embedding and search results
-        mock_embedding = [0.1, 0.2, 0.3]  # Mock embedding vector
+        # Step 2: Setup mock search results
         mock_results = [
             self.create_mock_scored_point("1", 0.8, {
                 "title": "Python Best Practices", 
