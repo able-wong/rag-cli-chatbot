@@ -54,6 +54,12 @@ Commands available in chat:
         version='RAG CLI Chatbot 1.0.0'
     )
     
+    parser.add_argument(
+        '-v', '--verbose',
+        action='store_true',
+        help='Enable verbose output showing detailed query analysis and timing'
+    )
+    
     args = parser.parse_args()
     
     console = Console()
@@ -70,7 +76,7 @@ Commands available in chat:
         console.print("🚀 [green]Starting RAG CLI Chatbot...[/green]")
         console.print(f"📋 [dim]Using config: {args.config}[/dim]")
         
-        cli = RAGCLI(args.config)
+        cli = RAGCLI(args.config, verbose=args.verbose)
         cli.chat()
         
     except KeyboardInterrupt:

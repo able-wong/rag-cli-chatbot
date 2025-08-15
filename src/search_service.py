@@ -6,10 +6,13 @@ negation filtering, and soft filtering with weighted diminishing returns boostin
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 from qdrant_client.models import ScoredPoint
 
 logger = logging.getLogger(__name__)
+
+# Type definition for progress callback
+ProgressCallback = Callable[[str, Dict[str, Any]], None]
 
 # Soft filtering configuration at top of file for easy tweaking
 SOFT_FILTER_CONFIG = {
@@ -35,76 +38,156 @@ SOFT_FILTER_CONFIG = {
 
 class SearchService:
     """
-    Unified search service with hard filtering, negation filtering, and soft filter boosting.
+    Search Service responsible for search Vector DB for LLM context retrieval.
     
     This service combines semantic vector search with metadata filtering and score boosting:
     - Hard filters: Must-match conditions (excludes documents if not matching)
     - Negation filters: Must-NOT-match conditions (excludes documents if matching)  
     - Soft filters: Boost-if-match conditions (increases score but doesn't exclude)
+
+    Flow:
+    1. Analyze query with QueryRewriter to extract filters and rewrite query if needed
+    2. Generate dense (and optionally sparse) embeddings for the query
+    3. Perform vector search with hard and negation filters applied, natively supported by Qdrant
+    4. If soft filters present, fetch extra results and apply diminishing returns boosting
+    5. Re-rank by boosted scores and return top-k results
     """
     
-    def __init__(self, qdrant_db, config: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self, 
+        qdrant_db,
+        dense_embedding_client,  # Required
+        query_rewriter,  # Required
+        sparse_embedding_client=None,  # Optional (can be None if hybrid disabled)
+        config: Optional[Dict[str, Any]] = None
+    ):
         """
-        Initialize SearchService.
+        Initialize SearchService with all required providers for self-contained operation.
         
         Args:
             qdrant_db: QdrantDB instance for vector search operations
+            dense_embedding_client: EmbeddingClient for dense vector generation
+            query_rewriter: QueryRewriter for query analysis and transformation
+            sparse_embedding_client: Optional EmbeddingClient for sparse vector generation
             config: Optional configuration overrides for soft filtering
         """
         self.qdrant_db = qdrant_db
+        self.dense_embedding_client = dense_embedding_client
+        self.query_rewriter = query_rewriter
+        self.sparse_embedding_client = sparse_embedding_client
         self.config = {**SOFT_FILTER_CONFIG, **(config or {})}
-        logger.info("SearchService initialized with soft filtering enabled")
+        logger.info("SearchService initialized with self-contained embedding and query processing")
         
     def unified_search(
         self, 
-        query_vector: List[float], 
+        query: str,  # Raw query string to process and search
         top_k: int, 
-        hard_filters: Optional[Dict[str, Any]] = None,
-        negation_filters: Optional[Dict[str, Any]] = None, 
-        soft_filters: Optional[Dict[str, Any]] = None,
-        score_threshold: Optional[float] = None
+        score_threshold: Optional[float] = None,
+        enable_hybrid: Optional[bool] = None,  # Optional override for global config
+        progress_callback: Optional[ProgressCallback] = None  # Optional progress updates
     ) -> List[ScoredPoint]:
         """
-        Unified search with hard filtering, negation filtering, and soft filter boosting.
+        Unified search with query processing, embedding generation, and filtering.
+        
+        Analyzes the query using QueryRewriter to extract filters and rewrite the query,
+        then performs vector search with automatic filter application and score boosting.
         
         Args:
-            query_vector: The embedding vector for semantic search
+            query: Raw query string to process and search
             top_k: Number of final results to return
-            hard_filters: Must-match metadata filters (excludes if not matching)
-            negation_filters: Must-NOT-match metadata filters (excludes if matching)
-            soft_filters: Boost-if-match metadata filters (boost score, don't exclude)
             score_threshold: Minimum similarity score threshold
+            enable_hybrid: Optional override to enable/disable hybrid search
+            progress_callback: Optional callback for progress updates during search
         
         Returns:
             List of top_k ScoredPoint objects, re-ranked by boosted scores
         """
         try:
-            # Step 1: Determine fetch limit for re-ranking
-            has_soft_filters = soft_filters and any(soft_filters.values())
+            # Step 1: Analyze query using QueryRewriter
+            if progress_callback:
+                progress_callback("analyzing", {})
+            
+            logger.debug(f"Analyzing query: {query}")
+            query_analysis = self.query_rewriter.transform_query(query)
+            embedding_texts = query_analysis.get('embedding_texts', {})
+            strategy = query_analysis.get('strategy', 'rewrite')
+            
+            # Select embedding text based on strategy
+            if strategy == 'hyde' and 'hyde' in embedding_texts and embedding_texts['hyde']:
+                embedding_text = embedding_texts['hyde'][0] if isinstance(embedding_texts['hyde'], list) else embedding_texts['hyde']
+            else:
+                # Default to rewrite text (fallback for both rewrite strategy and hyde failures)
+                embedding_text = embedding_texts.get('rewrite', '')
+            
+            # Step 2: Extract filters from query analysis
+            hard_filters = query_analysis.get('hard_filters', {})
+            negation_filters = query_analysis.get('negation_filters', {})
+            soft_filters = query_analysis.get('soft_filters', {})
+            
+            if progress_callback:
+                progress_callback("query_analyzed", {
+                    "embedding_texts": embedding_texts,
+                    "embedding_text": embedding_text,
+                    "strategy": strategy,
+                    "original_query": query,
+                    "hard_filters": hard_filters,
+                    "negation_filters": negation_filters,
+                    "soft_filters": soft_filters,
+                    "source": query_analysis.get('source', 'unknown')
+                })
+            
+            # Convert empty dicts to None for cleaner processing
+            final_hard_filters = hard_filters if hard_filters else None
+            final_negation_filters = negation_filters if negation_filters else None
+            final_soft_filters = soft_filters if soft_filters else None
+            
+            # Step 3: Generate dense embedding (always required)
+            logger.debug(f"Generating dense embedding for: {embedding_text}")
+            dense_vector = self.dense_embedding_client.get_embedding(embedding_text)
+            
+            # Step 4: Generate sparse embedding if hybrid enabled
+            sparse_vector = None
+            hybrid_enabled = enable_hybrid if enable_hybrid is not None else self.config.get('enable_hybrid', False)
+            if hybrid_enabled and self.sparse_embedding_client and self.sparse_embedding_client.has_sparse_embedding():
+                logger.debug("Generating sparse embedding for hybrid search")
+                sparse_vector = self.sparse_embedding_client.get_sparse_embedding(embedding_text)
+            
+            # Step 5: Determine fetch limit for re-ranking
+            has_soft_filters = final_soft_filters and any(final_soft_filters.values())
             fetch_limit = top_k * self.config['fetch_multiplier'] if has_soft_filters else top_k
             
-            # Step 2: Apply hard filters and negation filters via Qdrant
-            logger.debug(f"Performing initial search with limit={fetch_limit}")
-            initial_results = self.qdrant_db.search(
-                query_vector=query_vector,
-                limit=fetch_limit,
-                score_threshold=score_threshold,
-                filters=hard_filters,
-                negation_filters=negation_filters
+            # Step 6: Perform search with dense (and optionally sparse) vectors
+            if progress_callback:
+                progress_callback("search_ready", {})
+            
+            logger.debug(f"Performing vector search with limit={fetch_limit}")
+            logger.debug(f"Hard filters being passed to Qdrant: {final_hard_filters}")
+            logger.debug(f"Negation filters being passed to Qdrant: {final_negation_filters}")
+            initial_results = self._search_with_vectors(
+                dense_vector, sparse_vector, fetch_limit, 
+                final_hard_filters, final_negation_filters, score_threshold
             )
             
             if not initial_results:
                 logger.info("No results found from initial search")
+                if progress_callback:
+                    progress_callback("search_complete", {
+                        "result_count": 0
+                    })
                 return []
             
             logger.info(f"Initial search returned {len(initial_results)} results")
+            if progress_callback:
+                progress_callback("search_complete", {
+                    "result_count": len(initial_results)
+                })
             
-            # Step 3: Apply soft filter boosting if soft filters provided
+            # Step 7: Apply soft filter boosting if soft filters provided
             if has_soft_filters:
                 logger.debug("Applying soft filter boosting")
-                boosted_results = self._apply_soft_filter_boosting(initial_results, soft_filters)
+                boosted_results = self._apply_soft_filter_boosting(initial_results, final_soft_filters)
                 
-                # Step 4: Re-rank by boosted scores and return top_k
+                # Step 7: Re-rank by boosted scores and return top_k
                 boosted_results.sort(key=lambda x: x.score, reverse=True)
                 final_results = boosted_results[:top_k]
                 
@@ -117,6 +200,39 @@ class SearchService:
         except Exception as e:
             logger.error(f"Unified search failed: {e}")
             return []
+    
+    def _search_with_vectors(
+        self,
+        dense_vector: List[float],
+        sparse_vector: Optional[Dict[str, Any]],
+        limit: int,
+        hard_filters: Optional[Dict[str, Any]] = None,
+        negation_filters: Optional[Dict[str, Any]] = None,
+        score_threshold: Optional[float] = None
+    ) -> List[ScoredPoint]:
+        """
+        Perform vector search with dense and optionally sparse vectors.
+        
+        Args:
+            dense_vector: Dense embedding vector
+            sparse_vector: Optional sparse embedding vector for hybrid search
+            limit: Number of results to return
+            hard_filters: Must-match metadata filters
+            negation_filters: Must-NOT-match metadata filters  
+            score_threshold: Minimum similarity score threshold
+            
+        Returns:
+            List of ScoredPoint objects from vector search
+        """
+        # For now, use only dense vector search
+        # TODO: Implement hybrid search combining dense + sparse vectors when sparse_vector is provided
+        return self.qdrant_db.search(
+            query_vector=dense_vector,
+            limit=limit,
+            score_threshold=score_threshold,
+            filters=hard_filters,
+            negation_filters=negation_filters
+        )
     
     def _apply_soft_filter_boosting(
         self, 
