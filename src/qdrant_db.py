@@ -97,8 +97,8 @@ class QdrantDB:
         """
         Search for similar vectors in the collection with optional metadata filtering.
         
-        NOTE: This method will soon be updated to use hybrid_search() internally with RRF fusion
-        for improved ranking. It is kept for backward compatibility and easier single-vector calling.
+        This method now uses hybrid_search() internally with RRF fusion for improved ranking.
+        It is kept for backward compatibility and easier single-vector calling.
         
         Args:
             query_vector: The vector to search for
@@ -110,42 +110,15 @@ class QdrantDB:
         Returns:
             List of ScoredPoint objects matching the criteria
         """
-        try:
-            if not self.collection_exists():
-                logger.warning(f"Collection '{self.collection_name}' does not exist")
-                return []
-            
-            search_params = {
-                "collection_name": self.collection_name,
-                "query_vector": ("dense", query_vector),  # Use dense vector for semantic search
-                "limit": limit
-            }
-            
-            if score_threshold is not None:
-                search_params["score_threshold"] = score_threshold
-            
-            # Build combined filter with both positive and negative conditions
-            if filters or negation_filters:
-                qdrant_filter = self._build_combined_filter(filters, negation_filters)
-                if qdrant_filter:
-                    search_params["query_filter"] = qdrant_filter
-                    
-                    # Log applied filters
-                    applied_filters = []
-                    if filters:
-                        applied_filters.extend([f"+{k}" for k in filters.keys()])
-                    if negation_filters:
-                        applied_filters.extend([f"-{k}" for k in negation_filters.keys()])
-                    logger.info(f"Applied hybrid search filters: {applied_filters}")
-            
-            results = self.client.search(**search_params)
-            
-            logger.info(f"Found {len(results)} results from search")
-            return results
-            
-        except Exception as e:
-            logger.error(f"Search failed: {e}")
-            return []
+        # Convert single vector search to hybrid search for RRF benefits
+        return self.hybrid_search(
+            dense_vectors=[query_vector],  # Single vector becomes multi-vector
+            sparse_vector=None,           # Skip sparse vector completely
+            limit=limit,
+            score_threshold=score_threshold,
+            filters=filters,
+            negation_filters=negation_filters
+        )
 
     def hybrid_search(
         self,
@@ -246,16 +219,6 @@ class QdrantDB:
             
         except Exception as e:
             logger.error(f"Hybrid search failed: {e}")
-            # Graceful fallback: try with first dense vector only if hybrid fails
-            if dense_vectors:
-                logger.info("Falling back to single dense vector search")
-                return self.search(
-                    query_vector=dense_vectors[0],
-                    limit=limit,
-                    score_threshold=score_threshold,
-                    filters=filters,
-                    negation_filters=negation_filters
-                )
             return []
     
     def scroll_collection(self, limit: int = 10) -> List[PointStruct]:

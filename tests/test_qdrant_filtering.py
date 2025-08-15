@@ -198,7 +198,11 @@ def test_build_combined_filter_error_handling(mock_qdrant_client_class):
 def test_search_with_negation_filters_only(mock_qdrant_client_class):
     """Test search method with only negation filters."""
     mock_client = create_mock_qdrant_client(collection_exists=True)
-    mock_client.search.return_value = []
+    
+    # Mock query_points response for hybrid search
+    mock_response = Mock()
+    mock_response.points = []
+    mock_client.query_points.return_value = mock_response
     
     mock_qdrant_client_class.return_value = mock_client
     
@@ -215,19 +219,26 @@ def test_search_with_negation_filters_only(mock_qdrant_client_class):
             negation_filters=negation_filters
         )
         
-        # Verify search was called with query_filter
-        mock_client.search.assert_called_once()
-        call_args = mock_client.search.call_args[1]
+        # Verify query_points was called (hybrid search backend)
+        mock_client.query_points.assert_called_once()
+        call_args = mock_client.query_points.call_args[1]
         
-        assert 'query_filter' in call_args
-        assert call_args['query_filter'] is not None
-        assert len(call_args['query_filter'].must_not) == 1
+        # Check that filters were applied to prefetch queries
+        assert 'prefetch' in call_args
+        prefetch_queries = call_args['prefetch']
+        for prefetch in prefetch_queries:
+            assert hasattr(prefetch, 'filter')
+            assert prefetch.filter is not None
 
 @patch('qdrant_db.QdrantClient')
 def test_search_with_both_filters_and_negation_filters(mock_qdrant_client_class):
     """Test search method with both positive and negative filters."""
     mock_client = create_mock_qdrant_client(collection_exists=True)
-    mock_client.search.return_value = []
+    
+    # Mock query_points response for hybrid search
+    mock_response = Mock()
+    mock_response.points = []
+    mock_client.query_points.return_value = mock_response
     
     mock_qdrant_client_class.return_value = mock_client
     
@@ -246,21 +257,29 @@ def test_search_with_both_filters_and_negation_filters(mock_qdrant_client_class)
             negation_filters=negation_filters
         )
         
-        # Verify search was called with combined filter
-        mock_client.search.assert_called_once()
-        call_args = mock_client.search.call_args[1]
+        # Verify query_points was called (hybrid search backend)
+        mock_client.query_points.assert_called_once()
+        call_args = mock_client.query_points.call_args[1]
         
-        assert 'query_filter' in call_args
-        query_filter = call_args['query_filter']
-        assert query_filter is not None
-        assert len(query_filter.must) == 1  # positive filter
-        assert len(query_filter.must_not) == 1  # negative filter
+        # Check that filters were applied to prefetch queries
+        assert 'prefetch' in call_args
+        prefetch_queries = call_args['prefetch']
+        for prefetch in prefetch_queries:
+            assert hasattr(prefetch, 'filter')
+            query_filter = prefetch.filter
+            assert query_filter is not None
+            assert len(query_filter.must) == 1  # positive filter
+            assert len(query_filter.must_not) == 1  # negative filter
 
 @patch('qdrant_db.QdrantClient')
 def test_search_negation_filter_logging(mock_qdrant_client_class):
     """Test that negation filters are properly logged."""
     mock_client = create_mock_qdrant_client(collection_exists=True)
-    mock_client.search.return_value = []
+    
+    # Mock query_points response for hybrid search
+    mock_response = Mock()
+    mock_response.points = []
+    mock_client.query_points.return_value = mock_response
     
     mock_qdrant_client_class.return_value = mock_client
     
@@ -325,7 +344,11 @@ def test_build_filter_conditions_comprehensive(mock_qdrant_client_class):
 def test_backward_compatibility_with_legacy_search(mock_qdrant_client_class):
     """Test that the enhanced search method maintains backward compatibility."""
     mock_client = create_mock_qdrant_client(collection_exists=True)
-    mock_client.search.return_value = []
+    
+    # Mock query_points response for hybrid search
+    mock_response = Mock()
+    mock_response.points = []
+    mock_client.query_points.return_value = mock_response
     
     mock_qdrant_client_class.return_value = mock_client
     
@@ -335,31 +358,35 @@ def test_backward_compatibility_with_legacy_search(mock_qdrant_client_class):
     with patch.object(db, 'collection_exists', return_value=True):
         query_vector = [0.1, 0.2, 0.3]
         
-        # Test legacy call (only filters parameter)
+        # Test legacy call (only filters parameter) - now uses hybrid search
         db.search(
             query_vector=query_vector,
             limit=5,
             filters={"author": "John Smith"}
         )
         
-        # Should work without issues
-        mock_client.search.assert_called_once()
-        call_args = mock_client.search.call_args[1]
-        assert 'query_filter' in call_args
+        # Should work without issues via hybrid search
+        mock_client.query_points.assert_called_once()
+        call_args = mock_client.query_points.call_args[1]
+        assert 'prefetch' in call_args
         
         # Reset mock for second test
         mock_client.reset_mock()
         
-        # Test completely legacy call (no filters at all)
+        # Test completely legacy call (no filters at all) - now uses hybrid search
         db.search(
             query_vector=query_vector,
             limit=5
         )
         
-        # Should work without query_filter
-        mock_client.search.assert_called_once()
-        call_args = mock_client.search.call_args[1]
-        assert 'query_filter' not in call_args
+        # Should work without filters via hybrid search
+        mock_client.query_points.assert_called_once()
+        call_args = mock_client.query_points.call_args[1]
+        assert 'prefetch' in call_args
+        # No filters should be applied to prefetch queries
+        prefetch_queries = call_args['prefetch']
+        for prefetch in prefetch_queries:
+            assert not hasattr(prefetch, 'filter') or prefetch.filter is None
 
 
 # ========================================
@@ -482,15 +509,12 @@ def test_hybrid_search_with_filters(mock_qdrant_client_class):
 
 
 @patch('qdrant_db.QdrantClient')
-def test_hybrid_search_error_fallback(mock_qdrant_client_class):
-    """Test hybrid search error handling with fallback to regular search."""
+def test_hybrid_search_error_handling(mock_qdrant_client_class):
+    """Test hybrid search error handling returns empty list."""
     mock_client = create_mock_qdrant_client(collection_exists=True)
     
     # Mock query_points to fail
     mock_client.query_points.side_effect = Exception("Hybrid search error")
-    
-    # Mock regular search to succeed
-    mock_client.search.return_value = [Mock(id=1, score=0.8)]
     
     mock_qdrant_client_class.return_value = mock_client
     
@@ -507,13 +531,11 @@ def test_hybrid_search_error_fallback(mock_qdrant_client_class):
             limit=5
         )
         
-        # Should have attempted query_points and fallen back to search
+        # Should have attempted query_points and returned empty list on error
         mock_client.query_points.assert_called_once()
-        mock_client.search.assert_called_once()
         
-        # Should return fallback results
-        assert len(results) == 1
-        assert results[0].score == 0.8
+        # Should return empty list on error
+        assert results == []
 
 
 @patch('qdrant_db.QdrantClient')
