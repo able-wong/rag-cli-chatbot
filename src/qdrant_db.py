@@ -97,6 +97,9 @@ class QdrantDB:
         """
         Search for similar vectors in the collection with optional metadata filtering.
         
+        NOTE: This method will soon be updated to use hybrid_search() internally with RRF fusion
+        for improved ranking. It is kept for backward compatibility and easier single-vector calling.
+        
         Args:
             query_vector: The vector to search for
             limit: Maximum number of results to return
