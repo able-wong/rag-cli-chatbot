@@ -22,6 +22,42 @@ def create_mock_qdrant_db():
     return mock_db
 
 
+def create_mock_embedding_client():
+    """Create a mock EmbeddingClient for testing."""
+    mock_client = Mock()
+    mock_client.get_embedding = Mock(return_value=[0.1, 0.2, 0.3])
+    mock_client.has_sparse_embedding = Mock(return_value=False)
+    mock_client.get_sparse_embedding = Mock(return_value={"indices": [1, 2], "values": [0.5, 0.3]})
+    return mock_client
+
+
+def create_mock_query_rewriter(hard_filters=None, negation_filters=None, soft_filters=None):
+    """Create a mock QueryRewriter for testing."""
+    mock_rewriter = Mock()
+    mock_rewriter.transform_query = Mock(return_value={
+        'embedding_texts': {'rewrite': 'processed query text', 'hyde': ['processed query text']},
+        'hard_filters': hard_filters or {},
+        'negation_filters': negation_filters or {},
+        'soft_filters': soft_filters or {},
+        'strategy': 'rewrite'
+    })
+    return mock_rewriter
+
+
+def create_search_service(config=None):
+    """Create a SearchService with all required mocks for testing."""
+    mock_db = create_mock_qdrant_db()
+    mock_dense_client = create_mock_embedding_client()
+    mock_query_rewriter = create_mock_query_rewriter()
+    
+    return SearchService(
+        qdrant_db=mock_db,
+        dense_embedding_client=mock_dense_client,
+        query_rewriter=mock_query_rewriter,
+        config=config
+    ), mock_db, mock_dense_client, mock_query_rewriter
+
+
 def create_mock_scored_point(point_id: str, score: float, payload: Dict[str, Any]) -> ScoredPoint:
     """Create a mock ScoredPoint for testing."""
     return ScoredPoint(
@@ -36,21 +72,38 @@ def create_mock_scored_point(point_id: str, score: float, payload: Dict[str, Any
 def test_search_service_initialization():
     """Test SearchService initialization with default and custom config."""
     mock_db = create_mock_qdrant_db()
+    mock_dense_client = create_mock_embedding_client()
+    mock_query_rewriter = create_mock_query_rewriter()
     
     # Test default initialization
-    search_service = SearchService(mock_db)
+    search_service = SearchService(
+        qdrant_db=mock_db,
+        dense_embedding_client=mock_dense_client,
+        query_rewriter=mock_query_rewriter
+    )
     assert search_service.qdrant_db == mock_db
+    assert search_service.dense_embedding_client == mock_dense_client
+    assert search_service.query_rewriter == mock_query_rewriter
+    assert search_service.sparse_embedding_client is None
     assert search_service.config['base_boost_per_match'] == 0.12
     assert search_service.config['field_weights']['tags'] == 1.2
     
-    # Test custom config
+    # Test custom config with sparse embedding client
     custom_config = {
         'base_boost_per_match': 0.15,
         'field_weights': {'tags': 1.5}
     }
-    search_service = SearchService(mock_db, custom_config)
+    mock_sparse_client = create_mock_embedding_client()
+    search_service = SearchService(
+        qdrant_db=mock_db,
+        dense_embedding_client=mock_dense_client,
+        query_rewriter=mock_query_rewriter,
+        sparse_embedding_client=mock_sparse_client,
+        config=custom_config
+    )
     assert search_service.config['base_boost_per_match'] == 0.15
     assert search_service.config['field_weights']['tags'] == 1.5
+    assert search_service.sparse_embedding_client == mock_sparse_client
     # Should still have default values for non-overridden fields
     assert search_service.config['diminishing_factor'] == 0.75
 
@@ -58,7 +111,14 @@ def test_search_service_initialization():
 def test_unified_search_no_soft_filters():
     """Test unified search without soft filters (should use standard search)."""
     mock_db = create_mock_qdrant_db()
-    search_service = SearchService(mock_db)
+    mock_dense_client = create_mock_embedding_client()
+    mock_query_rewriter = create_mock_query_rewriter()
+    
+    search_service = SearchService(
+        qdrant_db=mock_db,
+        dense_embedding_client=mock_dense_client,
+        query_rewriter=mock_query_rewriter
+    )
     
     # Mock search results
     mock_results = [
@@ -67,26 +127,37 @@ def test_unified_search_no_soft_filters():
     ]
     mock_db.search.return_value = mock_results
     
-    # Test search without soft filters
-    query_vector = [0.1, 0.2, 0.3]
-    hard_filters = {"author": "Smith"}
-    negation_filters = {"tags": ["draft"]}
+    # Set up query rewriter to return hard and negation filters
+    query = "test query"
+    expected_hard_filters = {"author": "Smith"}
+    expected_negation_filters = {"tags": ["draft"]}
+    
+    mock_query_rewriter.transform_query.return_value = {
+        'embedding_texts': {'rewrite': 'processed query text', 'hyde': ['processed query text']},
+        'hard_filters': expected_hard_filters,
+        'negation_filters': expected_negation_filters,
+        'soft_filters': {},
+        'strategy': 'rewrite'
+    }
     
     results = search_service.unified_search(
-        query_vector=query_vector,
-        top_k=5,
-        hard_filters=hard_filters,
-        negation_filters=negation_filters,
-        soft_filters=None
+        query=query,
+        top_k=5
     )
     
-    # Should call qdrant_db.search with correct parameters
+    # Should call query_rewriter.transform_query with the query
+    mock_query_rewriter.transform_query.assert_called_once_with(query)
+    
+    # Should call dense_embedding_client.get_embedding with processed text
+    mock_dense_client.get_embedding.assert_called_once_with('processed query text')
+    
+    # Should call qdrant_db.search with generated vector
     mock_db.search.assert_called_once_with(
-        query_vector=query_vector,
+        query_vector=[0.1, 0.2, 0.3],
         limit=5,  # No multiplier when no soft filters
         score_threshold=None,
-        filters=hard_filters,
-        negation_filters=negation_filters
+        filters=expected_hard_filters,
+        negation_filters=expected_negation_filters
     )
     
     # Should return original results unchanged
@@ -97,7 +168,14 @@ def test_unified_search_no_soft_filters():
 def test_unified_search_with_soft_filters():
     """Test unified search with soft filters (should apply boosting and re-ranking)."""
     mock_db = create_mock_qdrant_db()
-    search_service = SearchService(mock_db)
+    mock_dense_client = create_mock_embedding_client()
+    mock_query_rewriter = create_mock_query_rewriter()
+    
+    search_service = SearchService(
+        qdrant_db=mock_db,
+        dense_embedding_client=mock_dense_client,
+        query_rewriter=mock_query_rewriter
+    )
     
     # Mock search results with different scores
     mock_results = [
@@ -107,20 +185,33 @@ def test_unified_search_with_soft_filters():
     ]
     mock_db.search.return_value = mock_results
     
-    # Test search with soft filters
-    query_vector = [0.1, 0.2, 0.3]
-    soft_filters = {"tags": ["python"], "author": "Smith"}
+    # Set up query rewriter to return soft filters
+    query = "test query"
+    expected_soft_filters = {"tags": ["python"], "author": "Smith"}
+    
+    mock_query_rewriter.transform_query.return_value = {
+        'embedding_texts': {'rewrite': 'processed query text', 'hyde': ['processed query text']},
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': expected_soft_filters,
+        'strategy': 'rewrite'
+    }
     
     results = search_service.unified_search(
-        query_vector=query_vector,
-        top_k=2,
-        soft_filters=soft_filters
+        query=query,
+        top_k=2
     )
+    
+    # Should call query_rewriter.transform_query with the query
+    mock_query_rewriter.transform_query.assert_called_once_with(query)
+    
+    # Should call dense_embedding_client.get_embedding with processed text
+    mock_dense_client.get_embedding.assert_called_once_with('processed query text')
     
     # Should call qdrant_db.search with multiplied limit
     expected_limit = 2 * SOFT_FILTER_CONFIG['fetch_multiplier']  # 2 * 4 = 8
     mock_db.search.assert_called_once_with(
-        query_vector=query_vector,
+        query_vector=[0.1, 0.2, 0.3],
         limit=expected_limit,
         score_threshold=None,
         filters=None,
@@ -145,8 +236,7 @@ def test_unified_search_with_soft_filters():
 
 def test_boost_calculation_single_match():
     """Test boost calculation for single field matches."""
-    mock_db = create_mock_qdrant_db()
-    search_service = SearchService(mock_db)
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
     
     # Test single tag match
     payload = {"tags": ["python"], "author": "Smith"}
@@ -170,8 +260,7 @@ def test_boost_calculation_single_match():
 
 def test_boost_calculation_multiple_matches():
     """Test boost calculation with diminishing returns for multiple matches."""
-    mock_db = create_mock_qdrant_db()
-    search_service = SearchService(mock_db)
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
     
     # Document matching both tags and author
     payload = {"tags": ["python"], "author": "Smith", "title": "Python Guide"}
@@ -200,14 +289,12 @@ def test_boost_calculation_multiple_matches():
 
 def test_boost_calculation_max_cap():
     """Test that boost calculation respects maximum cap."""
-    mock_db = create_mock_qdrant_db()
-    
     # Create config with very high base boost to test capping
     high_boost_config = {
         'base_boost_per_match': 1.0,  # Very high boost
         'max_total_boost': 0.3  # But cap at 30%
     }
-    search_service = SearchService(mock_db, high_boost_config)
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service(high_boost_config)
     
     # Document with many matches
     payload = {
@@ -233,8 +320,7 @@ def test_boost_calculation_max_cap():
 
 def test_field_matching_tags():
     """Test tag field matching logic."""
-    mock_db = create_mock_qdrant_db()
-    search_service = SearchService(mock_db)
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
     
     # Test exact tag match
     payload = {"tags": ["python", "machine-learning", "ai"]}
@@ -258,8 +344,7 @@ def test_field_matching_tags():
 
 def test_field_matching_author():
     """Test author field matching logic."""
-    mock_db = create_mock_qdrant_db()
-    search_service = SearchService(mock_db)
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
     
     # Test partial author match
     payload = {"author": "Dr. John Smith"}
@@ -277,8 +362,7 @@ def test_field_matching_author():
 
 def test_field_matching_date():
     """Test date field matching logic."""
-    mock_db = create_mock_qdrant_db()
-    search_service = SearchService(mock_db)
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
     
     # Test DatetimeRange format matching
     payload = {"publication_date": "2025-03-15"}
@@ -301,31 +385,24 @@ def test_field_matching_date():
 
 def test_empty_filters_behavior():
     """Test behavior with empty or None filters."""
-    mock_db = create_mock_qdrant_db()
-    search_service = SearchService(mock_db)
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
     
     mock_results = [create_mock_scored_point("1", 0.9, {"title": "Test"})]
     mock_db.search.return_value = mock_results
     
-    query_vector = [0.1, 0.2, 0.3]
+    query = "test query"
     
-    # Test with None filters
+    # Test with None filters (QueryRewriter returns empty filters)
     results = search_service.unified_search(
-        query_vector=query_vector,
-        top_k=5,
-        hard_filters=None,
-        negation_filters=None,
-        soft_filters=None
+        query=query,
+        top_k=5
     )
     assert len(results) == 1
     
-    # Test with empty dict filters
+    # Test with empty dict filters (QueryRewriter returns empty filters)
     results = search_service.unified_search(
-        query_vector=query_vector,
-        top_k=5,
-        hard_filters={},
-        negation_filters={},
-        soft_filters={}
+        query=query,
+        top_k=5
     )
     assert len(results) == 1
     
@@ -334,17 +411,25 @@ def test_empty_filters_behavior():
 
 def test_no_search_results():
     """Test behavior when qdrant returns no results."""
-    mock_db = create_mock_qdrant_db()
-    search_service = SearchService(mock_db)
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
     
     # Mock empty search results
     mock_db.search.return_value = []
     
-    query_vector = [0.1, 0.2, 0.3]
+    query = "test query"
+    
+    # Set up query rewriter to return soft filters
+    mock_query_rewriter.transform_query.return_value = {
+        'embedding_texts': {'rewrite': 'processed query text', 'hyde': ['processed query text']},
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {"tags": ["python"]},
+        'strategy': 'rewrite'
+    }
+    
     results = search_service.unified_search(
-        query_vector=query_vector,
-        top_k=5,
-        soft_filters={"tags": ["python"]}
+        query=query,
+        top_k=5
     )
     
     assert results == []
@@ -354,8 +439,7 @@ def test_no_search_results():
 
 def test_boost_statistics_and_config():
     """Test boost statistics and configuration methods."""
-    mock_db = create_mock_qdrant_db()
-    search_service = SearchService(mock_db)
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
     
     # Test getting boost statistics
     stats = search_service.get_boost_statistics()
@@ -377,8 +461,7 @@ def test_boost_statistics_and_config():
 
 def test_complex_search_scenario():
     """Test complex search scenario with multiple filter types and boosting."""
-    mock_db = create_mock_qdrant_db()
-    search_service = SearchService(mock_db)
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
     
     # Create mock documents with varying match patterns
     mock_results = [
@@ -416,13 +499,19 @@ def test_complex_search_scenario():
     ]
     mock_db.search.return_value = mock_results
     
-    # Search with hard filters, negation filters, and soft filters
+    # Set up query rewriter to return all filter types
+    mock_query_rewriter.transform_query.return_value = {
+        'embedding_texts': {'rewrite': 'processed query text', 'hyde': ['processed query text']},
+        'hard_filters': {"publication_date": {"gte": "2025-01-01", "lt": "2026-01-01"}},
+        'negation_filters': {"tags": ["deprecated"]},
+        'soft_filters': {"tags": ["python"], "author": "Dr. Smith", "title": "Python"},
+        'strategy': 'rewrite'
+    }
+    
+    # Search with filters extracted from query
     results = search_service.unified_search(
-        query_vector=[0.1, 0.2, 0.3],
-        top_k=3,
-        hard_filters={"publication_date": {"gte": "2025-01-01", "lt": "2026-01-01"}},
-        negation_filters={"tags": ["deprecated"]},
-        soft_filters={"tags": ["python"], "author": "Dr. Smith", "title": "Python"}
+        query="test query",
+        top_k=3
     )
     
     # Should apply qdrant filtering first, then boost and re-rank
@@ -449,8 +538,7 @@ def test_complex_search_scenario():
 
 def test_edge_cases():
     """Test edge cases and error handling."""
-    mock_db = create_mock_qdrant_db()
-    search_service = SearchService(mock_db)
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
     
     # Test with malformed document payload
     payload = {"tags": None, "author": "", "invalid_field": 123}
@@ -467,10 +555,18 @@ def test_edge_cases():
     # Test with qdrant_db.search raising exception
     mock_db.search.side_effect = Exception("Qdrant error")
     
+    # Set up query rewriter to return soft filters for exception test
+    mock_query_rewriter.transform_query.return_value = {
+        'embedding_texts': {'rewrite': 'processed query text', 'hyde': ['processed query text']},
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {"tags": ["python"]},
+        'strategy': 'rewrite'
+    }
+    
     results = search_service.unified_search(
-        query_vector=[0.1, 0.2, 0.3],
-        top_k=5,
-        soft_filters={"tags": ["python"]}
+        query="test query",
+        top_k=5
     )
     
     # Should return empty results gracefully
@@ -481,37 +577,130 @@ def test_edge_cases():
 
 def test_fetch_multiplier_behavior():
     """Test that fetch_multiplier is used correctly with soft filters."""
-    mock_db = create_mock_qdrant_db()
-    
     # Custom config with different fetch multiplier
     custom_config = {'fetch_multiplier': 3}
-    search_service = SearchService(mock_db, custom_config)
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service(custom_config)
     
     mock_db.search.return_value = []
     
+    # Set up query rewriter to return soft filters
+    mock_query_rewriter.transform_query.return_value = {
+        'embedding_texts': {'rewrite': 'processed query text', 'hyde': ['processed query text']},
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {"tags": ["python"]},
+        'strategy': 'rewrite'
+    }
+    
     # With soft filters, should use multiplied limit
     search_service.unified_search(
-        query_vector=[0.1, 0.2, 0.3],
-        top_k=5,
-        soft_filters={"tags": ["python"]}
+        query="test query",
+        top_k=5
     )
     
     # Should call with limit = 5 * 3 = 15
     call_args = mock_db.search.call_args
     assert call_args.kwargs['limit'] == 15
     
-    # Without soft filters, should use original limit
+    # Reset mock and set up query rewriter for no soft filters
     mock_db.search.reset_mock()
+    mock_query_rewriter.transform_query.return_value = {
+        'embedding_texts': {'rewrite': 'processed query text', 'hyde': ['processed query text']},
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {},
+        'strategy': 'rewrite'
+    }
+    
+    # Without soft filters, should use original limit
     search_service.unified_search(
-        query_vector=[0.1, 0.2, 0.3],
-        top_k=5,
-        soft_filters=None
+        query="test query",
+        top_k=5
     )
     
     call_args = mock_db.search.call_args
     assert call_args.kwargs['limit'] == 5
     
     print("✓ Fetch multiplier test passed")
+
+
+def test_progress_callback():
+    """Test progress callback functionality during search."""
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
+    
+    # Mock search results
+    mock_results = [
+        create_mock_scored_point("1", 0.9, {"title": "Test Document 1"}),
+        create_mock_scored_point("2", 0.8, {"title": "Test Document 2"})
+    ]
+    mock_db.search.return_value = mock_results
+    
+    # Create mock callback to capture progress updates
+    progress_updates = []
+    def mock_callback(stage: str, data: Dict[str, Any]):
+        progress_updates.append((stage, data))
+    
+    # Test search with progress callback
+    results = search_service.unified_search(
+        query="test query",
+        top_k=5,
+        progress_callback=mock_callback
+    )
+    
+    # Should have received all expected progress updates
+    assert len(progress_updates) >= 4  # analyzing, query_analyzed, searching, search_complete
+    
+    # Check specific progress stages
+    stages = [update[0] for update in progress_updates]
+    assert "analyzing" in stages
+    assert "query_analyzed" in stages
+    assert "search_ready" in stages
+    assert "search_complete" in stages
+    
+    # Check query_analyzed data
+    query_analyzed_data = next(data for stage, data in progress_updates if stage == "query_analyzed")
+    assert "embedding_text" in query_analyzed_data
+    assert "strategy" in query_analyzed_data
+    assert "original_query" in query_analyzed_data
+    
+    # Check search_complete data
+    search_complete_data = next(data for stage, data in progress_updates if stage == "search_complete")
+    assert "result_count" in search_complete_data
+    assert search_complete_data["result_count"] == 2
+    
+    # Should still return correct results
+    assert len(results) == 2
+
+
+def test_progress_callback_no_results():
+    """Test progress callback when no search results are found."""
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
+    
+    # Mock empty search results
+    mock_db.search.return_value = []
+    
+    # Create mock callback to capture progress updates
+    progress_updates = []
+    def mock_callback(stage: str, data: Dict[str, Any]):
+        progress_updates.append((stage, data))
+    
+    # Test search with progress callback
+    results = search_service.unified_search(
+        query="test query",
+        top_k=5,
+        progress_callback=mock_callback
+    )
+    
+    # Should have received progress updates including empty results
+    stages = [update[0] for update in progress_updates]
+    assert "search_complete" in stages
+    
+    # Check search_complete data for empty results
+    search_complete_data = next(data for stage, data in progress_updates if stage == "search_complete")
+    assert search_complete_data["result_count"] == 0
+    
+    # Should return empty results
+    assert len(results) == 0
 
 
 if __name__ == "__main__":
@@ -531,7 +720,9 @@ if __name__ == "__main__":
         test_boost_statistics_and_config,
         test_complex_search_scenario,
         test_edge_cases,
-        test_fetch_multiplier_behavior
+        test_fetch_multiplier_behavior,
+        test_progress_callback,
+        test_progress_callback_no_results
     ]
     
     print("Running SearchService unit tests...")

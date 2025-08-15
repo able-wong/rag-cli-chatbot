@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from typing import List, Any, Dict
 from rich.console import Console
 from rich.markdown import Markdown
@@ -20,9 +21,14 @@ logger = logging.getLogger(__name__)
 DISPLAY_TEXT_TRUNCATE_LENGTH = 160  # Characters to show before truncating with "..."
 
 class RAGCLI:
-    def __init__(self, config_path: str = "config/config.yaml"):
+    def __init__(self, config_path: str = "config/config.yaml", verbose: bool = False):
         self.console = Console()
         self.config_manager = ConfigManager(config_path)
+        self.verbose = verbose
+        
+        # Timing infrastructure for progress callbacks
+        self.callback_start_time = None
+        self.last_query_analyzed_data = None
         
         # Setup logging
         setup_logging(self.config_manager.get_logging_config())
@@ -81,10 +87,23 @@ class RAGCLI:
             self.query_rewriter = QueryRewriter(self.llm_client, merged_config)
             logger.info("QueryRewriter initialized")
             
-            # Initialize SearchService with optional soft filtering configuration
+            # Initialize SearchService with all providers for self-contained operation
             search_service_config = self.config_manager.get('search_service', {})
-            self.search_service = SearchService(self.qdrant_db, search_service_config)
-            logger.info("SearchService initialized")
+            sparse_config = self.config_manager.get_sparse_embedding_config()
+            
+            # Create sparse embedding client if configured
+            sparse_embedding_client = None
+            if sparse_config:
+                sparse_embedding_client = EmbeddingClient(self.config_manager.get_embedding_config(), sparse_config)
+            
+            self.search_service = SearchService(
+                qdrant_db=self.qdrant_db,
+                dense_embedding_client=self.embedding_client,
+                query_rewriter=self.query_rewriter,
+                sparse_embedding_client=sparse_embedding_client,
+                config=search_service_config
+            )
+            logger.info("SearchService initialized with self-contained providers")
             
         except Exception as e:
             logger.error(f"Failed to initialize clients: {e}")
@@ -348,25 +367,79 @@ class RAGCLI:
             'soft_filters': {}
         }
     
-    def _perform_rag_search(self, embedding_text: str, query_analysis: Dict[str, Any]) -> List[Any]:
-        """Perform RAG search using SearchService with all filter types."""
+    def _search_progress_callback(self, stage: str, data: Dict[str, Any]) -> None:
+        """Handle progress updates from SearchService with timing and verbose output."""
+        current_time = time.time()
+        
+        if stage == "analyzing":
+            # Start timing
+            self.callback_start_time = current_time
+            self.console.print("🔄 [dim]Analyzing query...[/dim]")
+            
+        elif stage == "query_analyzed":
+            # Calculate elapsed time since analyzing started
+            elapsed = current_time - self.callback_start_time if self.callback_start_time else 0
+            self.console.print(f"Query Analyzed in {elapsed:.2f} seconds")
+            
+            # Store data for later use and verbose display
+            self.last_query_analyzed_data = data
+            
+            # Show verbose details if enabled
+            if self.verbose:
+                strategy = data.get("strategy", "rewrite")
+                embedding_text = data.get("embedding_text", "")
+                hard_filters = data.get("hard_filters", {})
+                negation_filters = data.get("negation_filters", {})
+                soft_filters = data.get("soft_filters", {})
+                
+                # Show strategy and embedding text
+                # Truncate embedding text for display
+                display_embedding = embedding_text[:60] + "..." if len(embedding_text) > 60 else embedding_text
+                self.console.print(f"  [dim]Strategy: {strategy}, Embedding: '{display_embedding}'[/dim]")
+                
+                # Show filters if any exist
+                query_analysis = {
+                    'hard_filters': hard_filters,
+                    'negation_filters': negation_filters,
+                    'soft_filters': soft_filters
+                }
+                filter_display = self._format_three_filter_display(query_analysis)
+                if filter_display:
+                    self.console.print(f"  [dim]Filters: [{filter_display}][/dim]")
+                else:
+                    self.console.print("  [dim]Filters: None[/dim]")
+            
+            # Update timer for next stage
+            self.callback_start_time = current_time
+            
+        elif stage == "search_ready":
+            # Calculate elapsed time since query_analyzed
+            elapsed = current_time - self.callback_start_time if self.callback_start_time else 0
+            self.console.print(f"Searching Knowledge base in {elapsed:.2f} seconds...")
+            
+            # Update timer for next stage
+            self.callback_start_time = current_time
+            
+        elif stage == "search_complete":
+            # Calculate elapsed time since search_ready
+            elapsed = current_time - self.callback_start_time if self.callback_start_time else 0
+            result_count = data.get("result_count", 0)
+            
+            if result_count > 0:
+                self.console.print(f"📄 [dim]Found {result_count} relevant documents in {elapsed:.2f} seconds[/dim]")
+            else:
+                self.console.print(f"❌ [dim]No relevant documents found in {elapsed:.2f} seconds[/dim]")
+    
+    def _perform_rag_search(self, query: str) -> List[Any]:
+        """Perform RAG search using SearchService."""
         try:
-            # Generate embedding for the optimized text
-            query_embedding = self.embedding_client.get_embedding(embedding_text)
-            
-            # Extract all filter types from query analysis
-            hard_filters = query_analysis.get('hard_filters', {})
-            negation_filters = query_analysis.get('negation_filters', {})
-            soft_filters = query_analysis.get('soft_filters', {})
-            
-            # Use SearchService unified search with all filter types
+            # SearchService handles all query analysis and filtering internally
             results = self.search_service.unified_search(
-                query_vector=query_embedding,
+                query=query,
                 top_k=self.top_k,
-                hard_filters=hard_filters if self.use_hybrid_search else None,
-                negation_filters=negation_filters if self.use_hybrid_search else None,
-                soft_filters=soft_filters if self.use_hybrid_search else None,
-                score_threshold=self.min_score
+                score_threshold=self.min_score,
+                enable_hybrid=self.use_hybrid_search,
+                progress_callback=self._search_progress_callback
             )
             
             logger.info(f"RAG search returned {len(results)} results")
@@ -432,6 +505,45 @@ class RAGCLI:
 Task: {llm_query}
 
 If the context doesn't contain enough information to complete the task, please state that clearly."""
+    
+    def _simplify_prompt_for_display(self, prompt: str) -> str:
+        """Simplify LLM prompt for display by replacing context with placeholder."""
+        lines = prompt.split('\n')
+        simplified_lines = []
+        in_context_section = False
+        context_found = False
+        
+        for line in lines:
+            # Check if we're entering the context section
+            if line.strip().startswith("Context from knowledge base:"):
+                in_context_section = True
+                context_found = True
+                simplified_lines.append("{{context}}")
+                continue
+            
+            # Check if we're entering the task section (exits context)
+            if line.strip().startswith("Task:"):
+                in_context_section = False
+                simplified_lines.append(line)
+                continue
+            
+            # Skip context content but keep other lines
+            if not in_context_section:
+                simplified_lines.append(line)
+        
+        # If no context section was found, just truncate if too long
+        if not context_found:
+            if len(prompt) > DISPLAY_TEXT_TRUNCATE_LENGTH:
+                return prompt[:DISPLAY_TEXT_TRUNCATE_LENGTH] + "..."
+            return prompt
+        
+        simplified = '\n'.join(simplified_lines)
+        
+        # Further truncate if still too long
+        if len(simplified) > DISPLAY_TEXT_TRUNCATE_LENGTH:
+            return simplified[:DISPLAY_TEXT_TRUNCATE_LENGTH] + "..."
+        
+        return simplified
     
     def _build_no_answer_prompt(self, llm_query: str) -> str:
         """Build prompt for when no relevant context is found."""
@@ -678,61 +790,50 @@ Is there anything else I can help you with, or would you like to rephrase your q
                         break  # Exit if /bye command
                     continue
                 
-                # Analyze and transform query
-                query_analysis = self._analyze_and_transform_query(user_input)
-                use_rag = query_analysis['search_rag']
+                # Quick check for trigger phrase to decide on RAG vs regular chat
+                has_trigger = self.trigger_phrase.lower() in user_input.lower()
+                use_rag = has_trigger
                 
                 if use_rag:
-                    # Select appropriate embedding text based on retrieval strategy
-                    retrieval_strategy = self.config_manager.get('rag.retrieval_strategy', 'rewrite')
-                    embedding_texts = query_analysis.get('embedding_texts', {})
+                    # Extract clean query by removing trigger phrase
+                    clean_query = user_input.replace(self.trigger_phrase, '').strip() if has_trigger else user_input
                     
-                    if retrieval_strategy == 'hyde' and 'hyde' in embedding_texts and embedding_texts['hyde']:
-                        # Use first hyde text for backward compatibility
-                        embedding_text = embedding_texts['hyde'][0]
-                    elif 'rewrite' in embedding_texts:
-                        embedding_text = embedding_texts['rewrite']
-                    else:
-                        # Fallback to rewrite text if embedding selection fails
-                        embedding_text = query_analysis.get('embedding_texts', {}).get('rewrite', '')
-                    
-                    search_display = embedding_text[:DISPLAY_TEXT_TRUNCATE_LENGTH] + "..." if len(embedding_text) > DISPLAY_TEXT_TRUNCATE_LENGTH else embedding_text
-                    
-                    if self.use_hybrid_search:
-                        filter_info = self._format_three_filter_display(query_analysis)
-                        if filter_info:
-                            self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}' ({filter_info})...[/dim]")
-                        else:
-                            self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}'...[/dim]")
-                    else:
-                        self.console.print(f"🔍 [dim]Searching knowledge base with '{search_display}'...[/dim]")
-                    
-                    rag_results = self._perform_rag_search(embedding_text, query_analysis)
+                    # Only trigger RAG if there's content after the trigger phrase
+                    if not clean_query:
+                        use_rag = False
+                
+                if use_rag:
+                    # SearchService will handle all query analysis and progress updates via callback
+                    rag_results = self._perform_rag_search(clean_query)
                     self.last_rag_results = rag_results
                     
                     if self._should_use_rag_context(rag_results):
-                        # Use RAG context with structured LLM query
+                        # Use RAG context with original user input as LLM query
                         context = self._build_rag_context(rag_results)
-                        prompt = self._build_prompt_with_context(query_analysis['llm_query'], context)
+                        prompt = self._build_prompt_with_context(user_input, context)
                     else:
                         # No relevant context found
-                        prompt = self._build_no_answer_prompt(query_analysis['llm_query'])
+                        prompt = self._build_no_answer_prompt(clean_query)
                         rag_results = []  # Clear results since they're not relevant
                 else:
-                    # Regular chat without RAG using structured LLM query
-                    prompt = query_analysis['llm_query']
+                    # Regular chat without RAG
+                    prompt = user_input
                     rag_results = []
                 
                 # Add user message to history
                 self.conversation_history.append({"role": "user", "content": prompt})
                 
-                # Get LLM response
-                llm_prompt_display = query_analysis['llm_query'][:DISPLAY_TEXT_TRUNCATE_LENGTH] + "..." if len(query_analysis['llm_query']) > DISPLAY_TEXT_TRUNCATE_LENGTH else query_analysis['llm_query']
+                # Get LLM response with timing
+                llm_prompt_display = self._simplify_prompt_for_display(prompt)
                 self.console.print(f"🤖 [dim]Thinking with LLM prompt '{llm_prompt_display}'...[/dim]")
+                
+                llm_start_time = time.time()
                 try:
                     response = self.llm_client.get_llm_response(self.conversation_history)
+                    llm_elapsed = time.time() - llm_start_time
                     
-                    # Display response
+                    # Display response with timing
+                    self.console.print(f"\n💬 [dim]LLM responded in {llm_elapsed:.2f} seconds[/dim]")
                     self.console.print("\n[bold green]Assistant:[/bold green]")
                     self.console.print(Markdown(response))
                     
