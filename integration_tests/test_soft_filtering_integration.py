@@ -280,7 +280,15 @@ class TestSoftFilteringIntegration:
         # Verify Qdrant search was called
         assert self.mock_qdrant.search.called, "Should call Qdrant search"
         
-        # Results should be boosted (document 1 should get highest boost for matching both filters)
+        # Results should be boosted. Document 1 should get the highest boost.
+        # We can verify that the order has changed and doc '1' is now first.
+        assert results[0].id == "1", "Document '1' should be boosted to the top"
+
+        # Also, verify that scores were modified.
+        original_scores = {r.id: r.score for r in mock_results}
+        final_scores = {r.id: r.score for r in results}
+        assert final_scores["1"] > original_scores["1"], "Score for document '1' should be boosted."
+        
         # Document 1: matches python + Smith = highest boost
         # Document 3: matches python only = medium boost  
         # Document 2: no matches = no boost
@@ -289,6 +297,7 @@ class TestSoftFilteringIntegration:
         print(f"  Query: {query}")
         print(f"  Results: {len(results)} documents")
         print(f"  Final scores: {[r.score for r in results]}")
+        print(f"  Original scores: {original_scores}")
         print(f"  Embedding called: {self.mock_embedding_client.get_embedding.called}")
         print(f"  Qdrant called: {self.mock_qdrant.search.called}")
     
@@ -310,11 +319,15 @@ class TestSoftFilteringIntegration:
             top_k=5
         )
         
-        # Verify the search was performed
-        assert self.mock_qdrant.search.called, "Should call Qdrant search"
+        # Verify the search was performed with the correct hard filter
+        self.mock_qdrant.search.assert_called_once()
+        call_args = self.mock_qdrant.search.call_args
+        # This assertion might be brittle due to LLM non-determinism, but it's important for validation.
+        # Consider mocking query_rewriter.transform_query if this becomes too flaky.
+        assert call_args.kwargs.get('filters') == {'author': 'Smith'}
         assert self.mock_embedding_client.get_embedding.called, "Should generate embedding"
         
-        # Should return original results unchanged
+        # Should return original results unchanged as there are no soft filters for boosting
         assert results == mock_results
         
         print("SearchService Hard Filters Only Test:")
@@ -348,8 +361,17 @@ class TestSoftFilteringIntegration:
             top_k=3
         )
         
-        # Verify the search pipeline was executed
-        assert self.mock_qdrant.search.called, "Should call Qdrant search"
+        # Verify the search pipeline was executed with correct filters
+        self.mock_qdrant.search.assert_called_once()
+        call_args = self.mock_qdrant.search.call_args
+        
+        # These assertions might be brittle due to LLM non-determinism.
+        # Consider mocking query_rewriter.transform_query if they become flaky.
+        filters = call_args.kwargs.get('filters', {})
+        assert 'publication_date' in filters, "Hard filter for publication_date expected"
+        assert call_args.kwargs.get('negation_filters') == {'author': 'Johnson'}, "Negation filter for author: Johnson expected"
+        # Note: Limit multiplier depends on whether LLM extracts soft filters for this query
+        
         assert self.mock_embedding_client.get_embedding.called, "Should generate embedding"
         assert len(results) == 1, f"Should return 1 result, got {len(results)}"
         
