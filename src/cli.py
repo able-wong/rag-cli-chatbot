@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 # Display constants
 DISPLAY_TEXT_TRUNCATE_LENGTH = 160  # Characters to show before truncating with "..."
+EMBEDDING_TEXT_TRUNCATE_LENGTH = 60  # Characters to show for embedding text in verbose mode
+
+# Prompt structure constants
+CONTEXT_SECTION_HEADER = "Context from knowledge base:"
+TASK_SECTION_HEADER = "Task:"
 
 class RAGCLI:
     def __init__(self, config_path: str = "config/config.yaml", verbose: bool = False):
@@ -395,7 +400,7 @@ class RAGCLI:
                 
                 # Show strategy, source, and embedding text
                 # Truncate embedding text for display
-                display_embedding = embedding_text[:60] + "..." if len(embedding_text) > 60 else embedding_text
+                display_embedding = embedding_text[:EMBEDDING_TEXT_TRUNCATE_LENGTH] + "..." if len(embedding_text) > EMBEDDING_TEXT_TRUNCATE_LENGTH else embedding_text
                 self.console.print(f"  [dim]Strategy: {strategy}, Source: {source}, Embedding: '{display_embedding}'[/dim]")
                 
                 # Show filters if any exist
@@ -500,10 +505,10 @@ class RAGCLI:
     
     def _build_prompt_with_context(self, llm_query: str, context: str) -> str:
         """Build user prompt with RAG context using structured LLM query."""
-        return f"""Context from knowledge base:
+        return f"""{CONTEXT_SECTION_HEADER}
 {context}
 
-Task: {llm_query}
+{TASK_SECTION_HEADER} {llm_query}
 
 If the context doesn't contain enough information to complete the task, please state that clearly."""
     
@@ -516,14 +521,14 @@ If the context doesn't contain enough information to complete the task, please s
         
         for line in lines:
             # Check if we're entering the context section
-            if line.strip().startswith("Context from knowledge base:"):
+            if line.strip().startswith(CONTEXT_SECTION_HEADER):
                 in_context_section = True
                 context_found = True
                 simplified_lines.append("{{context}}")
                 continue
             
             # Check if we're entering the task section (exits context)
-            if line.strip().startswith("Task:"):
+            if line.strip().startswith(TASK_SECTION_HEADER):
                 in_context_section = False
                 simplified_lines.append(line)
                 continue
