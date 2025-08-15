@@ -110,7 +110,14 @@ class SearchService:
             logger.debug(f"Analyzing query: {query}")
             query_analysis = self.query_rewriter.transform_query(query)
             embedding_texts = query_analysis.get('embedding_texts', {})
-            embedding_text = embedding_texts.get('rewrite', '') if query_analysis.get('strategy', 'rewrite') == 'rewrite' else embedding_texts.get('hyde', [])[0]
+            strategy = query_analysis.get('strategy', 'rewrite')
+            
+            # Select embedding text based on strategy
+            if strategy == 'hyde' and 'hyde' in embedding_texts and embedding_texts['hyde']:
+                embedding_text = embedding_texts['hyde'][0] if isinstance(embedding_texts['hyde'], list) else embedding_texts['hyde']
+            else:
+                # Default to rewrite text (fallback for both rewrite strategy and hyde failures)
+                embedding_text = embedding_texts.get('rewrite', '')
             
             # Step 2: Extract filters from query analysis
             hard_filters = query_analysis.get('hard_filters', {})
@@ -121,7 +128,7 @@ class SearchService:
                 progress_callback("query_analyzed", {
                     "embedding_texts": embedding_texts,
                     "embedding_text": embedding_text,
-                    "strategy": query_analysis.get('strategy', 'rewrite'),
+                    "strategy": strategy,
                     "original_query": query,
                     "hard_filters": hard_filters,
                     "negation_filters": negation_filters,
