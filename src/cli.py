@@ -391,11 +391,12 @@ class RAGCLI:
                 hard_filters = data.get("hard_filters", {})
                 negation_filters = data.get("negation_filters", {})
                 soft_filters = data.get("soft_filters", {})
+                source = data.get("source", "unknown")
                 
-                # Show strategy and embedding text
+                # Show strategy, source, and embedding text
                 # Truncate embedding text for display
                 display_embedding = embedding_text[:60] + "..." if len(embedding_text) > 60 else embedding_text
-                self.console.print(f"  [dim]Strategy: {strategy}, Embedding: '{display_embedding}'[/dim]")
+                self.console.print(f"  [dim]Strategy: {strategy}, Source: {source}, Embedding: '{display_embedding}'[/dim]")
                 
                 # Show filters if any exist
                 query_analysis = {

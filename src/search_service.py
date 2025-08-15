@@ -132,7 +132,8 @@ class SearchService:
                     "original_query": query,
                     "hard_filters": hard_filters,
                     "negation_filters": negation_filters,
-                    "soft_filters": soft_filters
+                    "soft_filters": soft_filters,
+                    "source": query_analysis.get('source', 'unknown')
                 })
             
             # Convert empty dicts to None for cleaner processing
@@ -160,6 +161,8 @@ class SearchService:
                 progress_callback("search_ready", {})
             
             logger.debug(f"Performing vector search with limit={fetch_limit}")
+            logger.debug(f"Hard filters being passed to Qdrant: {final_hard_filters}")
+            logger.debug(f"Negation filters being passed to Qdrant: {final_negation_filters}")
             initial_results = self._search_with_vectors(
                 dense_vector, sparse_vector, fetch_limit, 
                 final_hard_filters, final_negation_filters, score_threshold

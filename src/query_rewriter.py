@@ -232,6 +232,11 @@ Format your response clearly with the sections above."""
             logger.warning(f"LLM trigger detection mismatch. Expected: {actual_has_trigger}, Got: {result['search_rag']}")
             result['search_rag'] = actual_has_trigger
         
+        # Ensure strategy field is always present with configured value
+        if 'strategy' not in result:
+            logger.debug(f"Adding missing strategy field: {self.retrieval_strategy}")
+            result['strategy'] = self.retrieval_strategy
+        
         return result
     
     def _create_fallback_result(self, user_query: str) -> Dict[str, Any]:
@@ -263,6 +268,7 @@ Format your response clearly with the sections above."""
             'hard_filters': {},
             'negation_filters': {},
             'soft_filters': {},
+            'strategy': self.retrieval_strategy,  # Use configured strategy even in fallback
             'source': 'fallback'
         }
         
