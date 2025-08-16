@@ -501,11 +501,11 @@ class RAGCLI:
             else:
                 self.console.print(f"❌ [dim]No relevant documents found in {elapsed:.2f} seconds[/dim]")
     
-    def _perform_rag_search(self, query: str) -> List[Any]:
+    def _perform_rag_search(self, query: str) -> tuple[List[Any], Dict[str, Any]]:
         """Perform RAG search using SearchService."""
         try:
             # SearchService handles all query analysis and filtering internally
-            results = self.search_service.unified_search(
+            results, query_analysis = self.search_service.unified_search_with_analysis(
                 query=query,
                 top_k=self.top_k,
                 score_threshold=self.min_score,
@@ -514,11 +514,11 @@ class RAGCLI:
             )
             
             logger.info(f"RAG search returned {len(results)} results")
-            return results
+            return results, query_analysis
             
         except Exception as e:
             logger.error(f"RAG search failed: {e}")
-            return []
+            return [], {}
     
     def _should_use_rag_context(self, results: List[Any]) -> bool:
         """Determine if RAG context should be used based on results."""
@@ -875,13 +875,20 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 
                 if use_rag:
                     # SearchService will handle all query analysis and progress updates via callback
-                    rag_results = self._perform_rag_search(clean_query)
+                    rag_results, query_analysis = self._perform_rag_search(clean_query)
                     self.last_rag_results = rag_results
                     
                     if self._should_use_rag_context(rag_results):
-                        # Use RAG context with original user input as LLM query
+                        # Use RAG context with rewritten query as LLM query
                         context = self._build_rag_context(rag_results)
-                        prompt = self._build_prompt_with_context(user_input, context)
+                        
+                        # Use proper LLM query from SearchService query analysis
+                        llm_query = user_input  # Default fallback
+                        if query_analysis and 'llm_query' in query_analysis:
+                            llm_query = query_analysis['llm_query']
+                            logger.debug(f"Using analyzed LLM query: '{llm_query}' (original: '{user_input}')")
+                        
+                        prompt = self._build_prompt_with_context(llm_query, context)
                     else:
                         # No relevant context found
                         prompt = self._build_no_answer_prompt(clean_query)

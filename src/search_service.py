@@ -135,6 +135,25 @@ class SearchService:
         """
         Unified search with query processing, embedding generation, and filtering.
         
+        This method provides backward compatibility by returning only search results.
+        For access to query analysis data (including llm_query), use unified_search_with_analysis().
+        """
+        results, _ = self.unified_search_with_analysis(
+            query, top_k, score_threshold, enable_hybrid, progress_callback
+        )
+        return results
+    
+    def unified_search_with_analysis(
+        self, 
+        query: str,  # Raw query string to process and search
+        top_k: int, 
+        score_threshold: Optional[float] = None,
+        enable_hybrid: Optional[bool] = None,  # Optional override for global config
+        progress_callback: Optional[ProgressCallback] = None  # Optional progress updates
+    ) -> tuple[List[ScoredPoint], Dict[str, Any]]:
+        """
+        Unified search with query processing, embedding generation, and filtering.
+        
         Analyzes the query using QueryRewriter to extract filters and rewrite the query,
         then performs vector search with automatic filter application and score boosting.
         
@@ -146,7 +165,9 @@ class SearchService:
             progress_callback: Optional callback for progress updates during search
         
         Returns:
-            List of top_k ScoredPoint objects with normalized scores (0.5-0.95 range)
+            Tuple of:
+            - List of top_k ScoredPoint objects with normalized scores (0.5-0.95 range)
+            - Dictionary containing query analysis data (including llm_query for LLM prompting)
             
         Note on Returned Scores:
             All returned scores are normalized through our two-stage normalization system:
@@ -255,7 +276,7 @@ class SearchService:
                     progress_callback("search_complete", {
                         "result_count": 0
                     })
-                return []
+                return [], query_analysis
             
             logger.info(f"Initial search returned {len(initial_results)} results")
             if progress_callback:
@@ -273,14 +294,14 @@ class SearchService:
                 final_results = boosted_results[:top_k]
                 
                 logger.info(f"Soft filtering boosted and re-ranked to {len(final_results)} results")
-                return final_results
+                return final_results, query_analysis
             else:
                 logger.debug("No soft filters provided, returning initial results")
-                return initial_results
+                return initial_results, query_analysis
                 
         except Exception as e:
             logger.error(f"Unified search failed: {e}")
-            return []
+            return [], {}
     
     def _search_with_vectors(
         self,

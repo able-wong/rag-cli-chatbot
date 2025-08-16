@@ -39,7 +39,8 @@ def create_mock_query_rewriter(hard_filters=None, negation_filters=None, soft_fi
         'hard_filters': hard_filters or {},
         'negation_filters': negation_filters or {},
         'soft_filters': soft_filters or {},
-        'strategy': 'rewrite'
+        'strategy': 'rewrite',
+        'llm_query': 'Test LLM query for unit testing'
     })
     return mock_rewriter
 
@@ -1011,6 +1012,56 @@ def test_enable_hybrid_parameter_override():
     print("✓ enable_hybrid parameter override test passed")
 
 
+def test_unified_search_with_analysis_returns_query_data():
+    """Test unified_search_with_analysis returns both results and query analysis."""
+    mock_db = create_mock_qdrant_db()
+    mock_dense_client = create_mock_embedding_client()
+    mock_query_rewriter = create_mock_query_rewriter()
+    
+    search_service = SearchService(
+        qdrant_db=mock_db,
+        dense_embedding_client=mock_dense_client,
+        query_rewriter=mock_query_rewriter
+    )
+    
+    # Mock search results
+    mock_results = [
+        create_mock_scored_point("1", 0.9, {"title": "Test Document 1"}),
+        create_mock_scored_point("2", 0.8, {"title": "Test Document 2"})
+    ]
+    mock_db.search.return_value = mock_results
+    
+    # Call unified_search_with_analysis
+    query = "test query"
+    results, query_analysis = search_service.unified_search_with_analysis(
+        query=query,
+        top_k=5
+    )
+    
+    # Should return results
+    assert results == mock_results
+    assert len(results) == 2
+    
+    # Should return query analysis with expected fields
+    assert isinstance(query_analysis, dict)
+    assert 'embedding_texts' in query_analysis
+    assert 'hard_filters' in query_analysis
+    assert 'negation_filters' in query_analysis
+    assert 'soft_filters' in query_analysis
+    assert 'strategy' in query_analysis
+    assert 'llm_query' in query_analysis
+    
+    # Check specific values from mock
+    assert query_analysis['llm_query'] == 'Test LLM query for unit testing'
+    assert query_analysis['strategy'] == 'rewrite'
+    assert query_analysis['embedding_texts'] == {'rewrite': 'processed query text', 'hyde': ['processed query text']}
+    
+    # Should call query_rewriter.transform_query with the query
+    mock_query_rewriter.transform_query.assert_called_once_with(query)
+    
+    print("✓ unified_search_with_analysis returns query data test passed")
+
+
 if __name__ == "__main__":
     # Run all tests
     test_functions = [
@@ -1037,7 +1088,8 @@ if __name__ == "__main__":
         test_hybrid_search_with_sparse_embedding,
         test_hybrid_search_mode_selection,
         test_search_with_vectors_method,
-        test_enable_hybrid_parameter_override
+        test_enable_hybrid_parameter_override,
+        test_unified_search_with_analysis_returns_query_data
     ]
     
     print("Running SearchService unit tests...")
