@@ -165,6 +165,69 @@ class RAGCLI:
         
         return base_help
 
+    def _show_verbose_embedding_details(self, strategy: str, embedding_texts: Dict[str, Any], fallback_embedding_text: str) -> None:
+        """Show detailed embedding information in verbose mode."""
+        # Check if we have hybrid search configuration
+        has_sparse_client = hasattr(self, 'search_service') and self.search_service.sparse_embedding_client is not None
+        
+        # Check if hybrid mode is actually enabled (from callback data or fallback to config)
+        hybrid_enabled = bool(embedding_texts)  # If embedding_texts is provided, hybrid mode is enabled
+        if not hybrid_enabled:
+            hybrid_enabled = self.use_hybrid_search  # Fallback to config setting
+        
+        # Determine search mode
+        search_mode = "Traditional Search"
+        if hybrid_enabled:
+            if has_sparse_client:
+                search_mode = "Dense+Sparse Hybrid Search (RRF)"
+            elif strategy == "hyde" and embedding_texts.get('hyde'):
+                search_mode = "Dense-only Hybrid Search (RRF)"
+            else:
+                search_mode = "Single Vector Search"
+        
+        self.console.print(f"  [dim]Search Mode: {search_mode}[/dim]")
+        
+        # Show dense vector details based on hybrid mode
+        if hybrid_enabled and embedding_texts:
+            # Hybrid mode: show multiple vectors if available
+            if strategy == "hyde" and embedding_texts.get('hyde'):
+                hyde_texts = embedding_texts['hyde']
+                if isinstance(hyde_texts, list) and len(hyde_texts) > 1:
+                    self.console.print(f"  [dim]Dense Vectors: {len(hyde_texts)} HyDE personas[/dim]")
+                    for i, hyde_text in enumerate(hyde_texts[:3], 1):  # Show up to 3
+                        truncated = self._truncate_text(hyde_text, EMBEDDING_TEXT_TRUNCATE_LENGTH)
+                        self.console.print(f"    [dim]Persona {i}: '{truncated}'[/dim]")
+                    if len(hyde_texts) > 3:
+                        self.console.print(f"    [dim]... and {len(hyde_texts) - 3} more personas[/dim]")
+                else:
+                    # Single HyDE text
+                    text_to_show = hyde_texts[0] if isinstance(hyde_texts, list) else hyde_texts
+                    truncated = self._truncate_text(text_to_show, EMBEDDING_TEXT_TRUNCATE_LENGTH)
+                    self.console.print(f"  [dim]Dense Vector: '{truncated}'[/dim]")
+            else:
+                # Rewrite strategy in hybrid mode
+                rewrite_text = embedding_texts.get('rewrite', fallback_embedding_text)
+                if rewrite_text:
+                    truncated = self._truncate_text(rewrite_text, EMBEDDING_TEXT_TRUNCATE_LENGTH)
+                    self.console.print(f"  [dim]Dense Vector: '{truncated}'[/dim]")
+            
+            # Show sparse vector details if hybrid enabled
+            if has_sparse_client:
+                sparse_text = embedding_texts.get('rewrite', fallback_embedding_text)
+                if sparse_text:
+                    truncated = self._truncate_text(sparse_text, EMBEDDING_TEXT_TRUNCATE_LENGTH)
+                    self.console.print(f"  [dim]Sparse Vector (SPLADE): '{truncated}'[/dim]")
+        else:
+            # Traditional mode: show single vector only
+            if fallback_embedding_text:
+                truncated = self._truncate_text(fallback_embedding_text, EMBEDDING_TEXT_TRUNCATE_LENGTH)
+                self.console.print(f"  [dim]Dense Vector: '{truncated}'[/dim]")
+    
+    def _truncate_text(self, text: str, max_length: int) -> str:
+        """Truncate text to specified length with ellipsis."""
+        if not text:
+            return ""
+        return text[:max_length] + "..." if len(text) > max_length else text
 
     def _format_three_filter_display(self, query_analysis: Dict[str, Any]) -> str:
         """Format three-filter display with clear type indicators."""
@@ -392,16 +455,18 @@ class RAGCLI:
             # Show verbose details if enabled
             if self.verbose:
                 strategy = data.get("strategy", "rewrite")
+                embedding_texts = data.get("embedding_texts", {})
                 embedding_text = data.get("embedding_text", "")
                 hard_filters = data.get("hard_filters", {})
                 negation_filters = data.get("negation_filters", {})
                 soft_filters = data.get("soft_filters", {})
                 source = data.get("source", "unknown")
                 
-                # Show strategy, source, and embedding text
-                # Truncate embedding text for display
-                display_embedding = embedding_text[:EMBEDDING_TEXT_TRUNCATE_LENGTH] + "..." if len(embedding_text) > EMBEDDING_TEXT_TRUNCATE_LENGTH else embedding_text
-                self.console.print(f"  [dim]Strategy: {strategy}, Source: {source}, Embedding: '{display_embedding}'[/dim]")
+                # Show strategy and source
+                self.console.print(f"  [dim]Strategy: {strategy}, Source: {source}[/dim]")
+                
+                # Show embedding details based on strategy and available data
+                self._show_verbose_embedding_details(strategy, embedding_texts, embedding_text)
                 
                 # Show filters if any exist
                 query_analysis = {
@@ -436,11 +501,11 @@ class RAGCLI:
             else:
                 self.console.print(f"❌ [dim]No relevant documents found in {elapsed:.2f} seconds[/dim]")
     
-    def _perform_rag_search(self, query: str) -> List[Any]:
+    def _perform_rag_search(self, query: str) -> tuple[List[Any], Dict[str, Any]]:
         """Perform RAG search using SearchService."""
         try:
             # SearchService handles all query analysis and filtering internally
-            results = self.search_service.unified_search(
+            results, query_analysis = self.search_service.unified_search_with_analysis(
                 query=query,
                 top_k=self.top_k,
                 score_threshold=self.min_score,
@@ -449,11 +514,11 @@ class RAGCLI:
             )
             
             logger.info(f"RAG search returned {len(results)} results")
-            return results
+            return results, query_analysis
             
         except Exception as e:
             logger.error(f"RAG search failed: {e}")
-            return []
+            return [], {}
     
     def _should_use_rag_context(self, results: List[Any]) -> bool:
         """Determine if RAG context should be used based on results."""
@@ -810,13 +875,20 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 
                 if use_rag:
                     # SearchService will handle all query analysis and progress updates via callback
-                    rag_results = self._perform_rag_search(clean_query)
+                    rag_results, query_analysis = self._perform_rag_search(clean_query)
                     self.last_rag_results = rag_results
                     
                     if self._should_use_rag_context(rag_results):
-                        # Use RAG context with original user input as LLM query
+                        # Use RAG context with rewritten query as LLM query
                         context = self._build_rag_context(rag_results)
-                        prompt = self._build_prompt_with_context(user_input, context)
+                        
+                        # Use proper LLM query from SearchService query analysis
+                        llm_query = user_input  # Default fallback
+                        if query_analysis and 'llm_query' in query_analysis:
+                            llm_query = query_analysis['llm_query']
+                            logger.debug(f"Using analyzed LLM query: '{llm_query}' (original: '{user_input}')")
+                        
+                        prompt = self._build_prompt_with_context(llm_query, context)
                     else:
                         # No relevant context found
                         prompt = self._build_no_answer_prompt(clean_query)

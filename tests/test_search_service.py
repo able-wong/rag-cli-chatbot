@@ -39,7 +39,8 @@ def create_mock_query_rewriter(hard_filters=None, negation_filters=None, soft_fi
         'hard_filters': hard_filters or {},
         'negation_filters': negation_filters or {},
         'soft_filters': soft_filters or {},
-        'strategy': 'rewrite'
+        'strategy': 'rewrite',
+        'llm_query': 'Test LLM query for unit testing'
     })
     return mock_rewriter
 
@@ -703,6 +704,364 @@ def test_progress_callback_no_results():
     assert len(results) == 0
 
 
+# ========================================
+# HYBRID SEARCH TESTS
+# ========================================
+
+def test_hyde_multi_vector_generation():
+    """Test multi-vector generation for HyDE strategy."""
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
+    
+    # Mock multiple embeddings for HyDE personas
+    mock_dense_client.get_embedding.side_effect = [
+        [0.1, 0.2, 0.3],  # Professor perspective
+        [0.4, 0.5, 0.6],  # Teacher perspective  
+        [0.7, 0.8, 0.9]   # Student perspective
+    ]
+    
+    # Set up query rewriter to return HyDE strategy with multiple personas
+    mock_query_rewriter.transform_query.return_value = {
+        'embedding_texts': {
+            'rewrite': 'neural networks',
+            'hyde': [
+                'Neural networks utilize backpropagation algorithms for weight optimization...',
+                'Neural networks learn by adjusting connections between artificial neurons...',
+                'I am studying how neural networks mimic the human brain to recognize patterns...'
+            ]
+        },
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {},
+        'strategy': 'hyde'
+    }
+    
+    # Mock hybrid search (since we changed the signature)
+    mock_db.hybrid_search = Mock(return_value=[
+        create_mock_scored_point("1", 0.9, {"title": "Neural Networks Guide"})
+    ])
+    
+    search_service.unified_search(
+        query="explain neural networks",
+        top_k=5,
+        enable_hybrid=True
+    )
+    
+    # Should generate 3 embeddings for HyDE personas
+    assert mock_dense_client.get_embedding.call_count == 3
+    
+    # Should call hybrid_search with multiple dense vectors
+    mock_db.hybrid_search.assert_called_once()
+    call_args = mock_db.hybrid_search.call_args
+    assert len(call_args.kwargs['dense_vectors']) == 3
+    assert call_args.kwargs['sparse_vector'] is None  # No sparse client configured
+    
+    print("✓ HyDE multi-vector generation test passed")
+
+
+def test_rewrite_single_vector_generation():
+    """Test single vector generation for rewrite strategy."""
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
+    
+    # Set up query rewriter to return rewrite strategy
+    mock_query_rewriter.transform_query.return_value = {
+        'embedding_texts': {
+            'rewrite': 'machine learning algorithms',
+            'hyde': []  # Empty hyde should fall back to rewrite
+        },
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {},
+        'strategy': 'rewrite'
+    }
+    
+    # Mock traditional search (should use single vector)
+    mock_db.search = Mock(return_value=[
+        create_mock_scored_point("1", 0.8, {"title": "ML Algorithms"})
+    ])
+    
+    search_service.unified_search(
+        query="machine learning algorithms",
+        top_k=5,
+        enable_hybrid=False  # Disabled hybrid search
+    )
+    
+    # Should generate 1 embedding for rewrite text
+    mock_dense_client.get_embedding.assert_called_once_with('machine learning algorithms')
+    
+    # Should call traditional search with single vector
+    mock_db.search.assert_called_once()
+    call_args = mock_db.search.call_args
+    assert call_args.kwargs['query_vector'] == [0.1, 0.2, 0.3]
+    
+    print("✓ Rewrite single vector generation test passed")
+
+
+def test_hybrid_search_with_sparse_embedding():
+    """Test hybrid search with sparse embedding generation."""
+    # Create search service with sparse embedding client
+    mock_db = create_mock_qdrant_db()
+    mock_dense_client = create_mock_embedding_client()
+    mock_sparse_client = create_mock_embedding_client()
+    mock_sparse_client.has_sparse_embedding.return_value = True
+    mock_query_rewriter = create_mock_query_rewriter()
+    
+    search_service = SearchService(
+        qdrant_db=mock_db,
+        dense_embedding_client=mock_dense_client,
+        query_rewriter=mock_query_rewriter,
+        sparse_embedding_client=mock_sparse_client
+    )
+    
+    # Set up query rewriter to return HyDE strategy
+    mock_query_rewriter.transform_query.return_value = {
+        'embedding_texts': {
+            'rewrite': 'neural networks',
+            'hyde': ['Professor perspective text']
+        },
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {},
+        'strategy': 'hyde'
+    }
+    
+    # Mock hybrid search
+    mock_db.hybrid_search = Mock(return_value=[
+        create_mock_scored_point("1", 0.95, {"title": "Neural Networks Research"})
+    ])
+    
+    search_service.unified_search(
+        query="explain neural networks",
+        top_k=5,
+        enable_hybrid=True
+    )
+    
+    # Should generate dense embedding for HyDE text
+    mock_dense_client.get_embedding.assert_called_once_with('Professor perspective text')
+    
+    # Should generate sparse embedding for keywords (rewrite text)
+    mock_sparse_client.get_sparse_embedding.assert_called_once_with('neural networks')
+    
+    # Should call hybrid_search with both dense and sparse vectors
+    mock_db.hybrid_search.assert_called_once()
+    call_args = mock_db.hybrid_search.call_args
+    assert len(call_args.kwargs['dense_vectors']) == 1
+    assert call_args.kwargs['sparse_vector'] == {"indices": [1, 2], "values": [0.5, 0.3]}
+    
+    print("✓ Hybrid search with sparse embedding test passed")
+
+
+def test_hybrid_search_mode_selection():
+    """Test automatic search mode selection based on configuration."""
+    # Test Dense+Sparse Hybrid Search
+    mock_db = create_mock_qdrant_db()
+    mock_dense_client = create_mock_embedding_client()
+    mock_sparse_client = create_mock_embedding_client()
+    mock_sparse_client.has_sparse_embedding.return_value = True
+    mock_query_rewriter = create_mock_query_rewriter()
+    
+    search_service = SearchService(
+        qdrant_db=mock_db,
+        dense_embedding_client=mock_dense_client,
+        query_rewriter=mock_query_rewriter,
+        sparse_embedding_client=mock_sparse_client
+    )
+    
+    # Mock methods to track which search mode is used
+    mock_db.hybrid_search = Mock(return_value=[])
+    mock_db.search = Mock(return_value=[])
+    
+    # Test 1: Dense+Sparse Hybrid (enable_hybrid=True + sparse available)
+    search_service.unified_search(
+        query="test query",
+        top_k=5,
+        enable_hybrid=True
+    )
+    
+    # Should use hybrid_search
+    mock_db.hybrid_search.assert_called()
+    mock_db.search.assert_not_called()
+    
+    # Reset mocks
+    mock_db.hybrid_search.reset_mock()
+    mock_db.search.reset_mock()
+    
+    # Test 2: Traditional Search (enable_hybrid=False)
+    search_service.unified_search(
+        query="test query",
+        top_k=5,
+        enable_hybrid=False
+    )
+    
+    # Should use traditional search
+    mock_db.search.assert_called()
+    mock_db.hybrid_search.assert_not_called()
+    
+    print("✓ Hybrid search mode selection test passed")
+
+
+def test_search_with_vectors_method():
+    """Test the updated _search_with_vectors method directly."""
+    search_service, mock_db, mock_dense_client, mock_query_rewriter = create_search_service()
+    
+    # Mock both search methods
+    mock_db.hybrid_search = Mock(return_value=[
+        create_mock_scored_point("1", 0.9, {"title": "Hybrid Result"})
+    ])
+    mock_db.search = Mock(return_value=[
+        create_mock_scored_point("1", 0.8, {"title": "Traditional Result"})
+    ])
+    
+    dense_vectors = [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]
+    sparse_vector = {"indices": [1, 2], "values": [0.5, 0.3]}
+    
+    # Test 1: Dense+Sparse Hybrid Search
+    results = search_service._search_with_vectors(
+        dense_vectors=dense_vectors,
+        sparse_vector=sparse_vector,
+        limit=5,
+        enable_hybrid=True
+    )
+    
+    mock_db.hybrid_search.assert_called_once()
+    assert len(results) == 1
+    assert results[0].payload["title"] == "Hybrid Result"
+    
+    # Reset mocks
+    mock_db.hybrid_search.reset_mock()
+    mock_db.search.reset_mock()
+    
+    # Test 2: Dense-only Hybrid Search (multiple dense vectors, no sparse)
+    results = search_service._search_with_vectors(
+        dense_vectors=dense_vectors,
+        sparse_vector=None,
+        limit=5,
+        enable_hybrid=True
+    )
+    
+    mock_db.hybrid_search.assert_called_once()
+    call_args = mock_db.hybrid_search.call_args
+    assert call_args.kwargs['sparse_vector'] is None
+    assert len(call_args.kwargs['dense_vectors']) == 2
+    
+    # Reset mocks
+    mock_db.hybrid_search.reset_mock()
+    mock_db.search.reset_mock()
+    
+    # Test 3: Traditional Search (single vector, hybrid disabled)
+    results = search_service._search_with_vectors(
+        dense_vectors=[[0.1, 0.2, 0.3]],  # Single vector
+        sparse_vector=None,
+        limit=5,
+        enable_hybrid=False
+    )
+    
+    mock_db.search.assert_called_once()
+    call_args = mock_db.search.call_args
+    assert call_args.kwargs['query_vector'] == [0.1, 0.2, 0.3]
+    
+    print("✓ _search_with_vectors method test passed")
+
+
+def test_enable_hybrid_parameter_override():
+    """Test enable_hybrid parameter override functionality."""
+    # Set up search service with sparse client and hybrid disabled by default
+    custom_config = {'enable_hybrid': False}
+    mock_db = create_mock_qdrant_db()
+    mock_dense_client = create_mock_embedding_client()
+    mock_sparse_client = create_mock_embedding_client()
+    mock_sparse_client.has_sparse_embedding.return_value = True
+    mock_query_rewriter = create_mock_query_rewriter()
+    
+    search_service = SearchService(
+        qdrant_db=mock_db,
+        dense_embedding_client=mock_dense_client,
+        query_rewriter=mock_query_rewriter,
+        sparse_embedding_client=mock_sparse_client,
+        config=custom_config
+    )
+    
+    mock_db.hybrid_search = Mock(return_value=[])
+    mock_db.search = Mock(return_value=[])
+    
+    # Test 1: Override to enable hybrid search
+    search_service.unified_search(
+        query="test query",
+        top_k=5,
+        enable_hybrid=True  # Override config
+    )
+    
+    # Should use hybrid search despite config
+    mock_db.hybrid_search.assert_called()
+    mock_db.search.assert_not_called()
+    
+    # Reset mocks
+    mock_db.hybrid_search.reset_mock()
+    mock_db.search.reset_mock()
+    
+    # Test 2: Use config default (hybrid disabled)
+    search_service.unified_search(
+        query="test query",
+        top_k=5
+        # No enable_hybrid parameter, should use config default
+    )
+    
+    # Should use traditional search
+    mock_db.search.assert_called()
+    mock_db.hybrid_search.assert_not_called()
+    
+    print("✓ enable_hybrid parameter override test passed")
+
+
+def test_unified_search_with_analysis_returns_query_data():
+    """Test unified_search_with_analysis returns both results and query analysis."""
+    mock_db = create_mock_qdrant_db()
+    mock_dense_client = create_mock_embedding_client()
+    mock_query_rewriter = create_mock_query_rewriter()
+    
+    search_service = SearchService(
+        qdrant_db=mock_db,
+        dense_embedding_client=mock_dense_client,
+        query_rewriter=mock_query_rewriter
+    )
+    
+    # Mock search results
+    mock_results = [
+        create_mock_scored_point("1", 0.9, {"title": "Test Document 1"}),
+        create_mock_scored_point("2", 0.8, {"title": "Test Document 2"})
+    ]
+    mock_db.search.return_value = mock_results
+    
+    # Call unified_search_with_analysis
+    query = "test query"
+    results, query_analysis = search_service.unified_search_with_analysis(
+        query=query,
+        top_k=5
+    )
+    
+    # Should return results
+    assert results == mock_results
+    assert len(results) == 2
+    
+    # Should return query analysis with expected fields
+    assert isinstance(query_analysis, dict)
+    assert 'embedding_texts' in query_analysis
+    assert 'hard_filters' in query_analysis
+    assert 'negation_filters' in query_analysis
+    assert 'soft_filters' in query_analysis
+    assert 'strategy' in query_analysis
+    assert 'llm_query' in query_analysis
+    
+    # Check specific values from mock
+    assert query_analysis['llm_query'] == 'Test LLM query for unit testing'
+    assert query_analysis['strategy'] == 'rewrite'
+    assert query_analysis['embedding_texts'] == {'rewrite': 'processed query text', 'hyde': ['processed query text']}
+    
+    # Should call query_rewriter.transform_query with the query
+    mock_query_rewriter.transform_query.assert_called_once_with(query)
+    
+    print("✓ unified_search_with_analysis returns query data test passed")
+
+
 if __name__ == "__main__":
     # Run all tests
     test_functions = [
@@ -722,7 +1081,15 @@ if __name__ == "__main__":
         test_edge_cases,
         test_fetch_multiplier_behavior,
         test_progress_callback,
-        test_progress_callback_no_results
+        test_progress_callback_no_results,
+        # New hybrid search tests
+        test_hyde_multi_vector_generation,
+        test_rewrite_single_vector_generation,
+        test_hybrid_search_with_sparse_embedding,
+        test_hybrid_search_mode_selection,
+        test_search_with_vectors_method,
+        test_enable_hybrid_parameter_override,
+        test_unified_search_with_analysis_returns_query_data
     ]
     
     print("Running SearchService unit tests...")

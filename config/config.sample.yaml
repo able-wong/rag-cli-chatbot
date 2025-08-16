@@ -6,7 +6,7 @@
 # ============================================================================
 llm:
   # PROVIDER SELECTION: Choose "ollama" or "gemini"
-  provider: "ollama"  # Options: "ollama", "gemini"
+  provider: "gemini"  # Options: "ollama", "gemini"
   
   # OLLAMA SETTINGS (Local LLM server)
   # Use these settings when provider = "ollama"
@@ -76,7 +76,7 @@ rag:
   trigger_phrase: "@knowledgebase"      # Phrase to trigger RAG search
   
   # RETRIEVAL STRATEGY SELECTION
-  retrieval_strategy: "rewrite"         # Options: "rewrite", "hyde"
+  retrieval_strategy: "hyde"            # Options: "rewrite", "hyde"
   
   # STRATEGY EXPLANATIONS:
   # 
@@ -105,8 +105,11 @@ rag:
   # - Switch to "hyde" if you need better retrieval of conceptually related documents
   # - Test both strategies with your specific knowledge base to determine optimal choice
   
+  # SEARCH METHOD SELECTION
+  search_method: "enhanced"             # Search method: "traditional" (hard filtering) or "enhanced" (score boosting)
+
   # HYBRID SEARCH SETTINGS
-  use_hybrid_search: false             # Enable metadata filtering from natural language queries
+  use_hybrid_search: false             # Enables advanced search features (vector hybrid search and intent-based filtering)
   
   # HYBRID SEARCH EXPLANATION:
   # When enabled, the system can extract metadata filters from natural language queries
@@ -135,18 +138,25 @@ rag:
   # - Works with both "rewrite" and "hyde" retrieval strategies
   
   # SEARCH SETTINGS
-  top_k: 10                             # Number of documents to retrieve
-  min_score: 0.3                       # Minimum similarity score threshold
+  top_k: 25                             # Number of documents to retrieve
+  min_score: 0.5                       # Minimum similarity score threshold
   
   # CONTEXT SETTINGS
   max_context_length: 8000             # Maximum characters in RAG context
+
+# ============================================================================
+# QUERY REWRITER CONFIGURATION
+# ============================================================================
+query_rewriter:
+  # ENABLE/DISABLE QUERY TRANSFORMATION
+  enabled: true                         # Enable LLM-based query transformation
   
-  # SYSTEM PROMPT
-  system_prompt: |
-    You are a helpful AI assistant with access to a knowledge base. 
-    When provided with context from the knowledge base, use it to answer questions accurately.
-    If the context doesn't contain relevant information, clearly state that you cannot answer based on the available knowledge base.
-    Never make up information that isn't in the provided context.
+  # LLM PARAMETERS FOR QUERY REWRITING
+  temperature: 0.1                      # Low temperature for consistent JSON output
+  max_tokens: 512                       # Shorter responses for structured output
+  
+  # FALLBACK BEHAVIOR
+  use_fallback_on_error: true          # Use simple fallback when transformation fails
 
 # ============================================================================
 # SPARSE EMBEDDING CONFIGURATION (Optional - enables exact phrase matching)
@@ -157,7 +167,7 @@ rag:
 
 sparse_embedding:
   # PROVIDER SELECTION: Currently only "splade" supported
-  provider: "splade"  # Neural sparse retrieval provider
+  provider: "splade"  # Future: "bm25", "tfidf", etc.
   
   # SPLADE SETTINGS (Neural sparse retrieval)
   splade:
@@ -223,6 +233,9 @@ documents:
 # CLI CONFIGURATION
 # ============================================================================
 cli:
+  # SYSTEM PROMPT SETTINGS
+  system_prompt: "You are a helpful AI assistant. Follow the task instructions carefully and use the specified context source as directed. If you don't know the answer based on the specified context or from conversation history, you can say you don't know."
+  
   # DISPLAY SETTINGS
   show_rag_results: true               # Show retrieved documents after RAG queries
   show_scores: true                    # Show similarity scores in results

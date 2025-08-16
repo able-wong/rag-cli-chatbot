@@ -47,12 +47,19 @@ class SearchService:
 
     Flow:
     1. Analyze query with QueryRewriter to extract filters and rewrite query if needed
-    2. Generate dense (and optionally sparse) embeddings for the query
-    3. Perform vector search with hard and negation filters applied, natively supported by Qdrant
-    4. Apply Stage 1 score normalization (RRF scores → 0.5-0.95 range)
-    5. If soft filters present, fetch extra results and apply diminishing returns boosting
-    6. Apply Stage 2 score normalization if needed (post-boost → 0.5-0.95 range)
-    7. Re-rank by normalized scores and return top-k results
+    2. Generate dense embeddings:
+       - HyDE strategy: Multiple dense vectors from all personas (Professor, Teacher, Student, etc.)
+       - Rewrite strategy: Single dense vector from keywords
+    3. Generate sparse embedding (if hybrid enabled): Keywords-based sparse vector from rewrite text
+    4. Perform vector search using one of three modes:
+       - Dense+Sparse Hybrid: Uses Qdrant RRF fusion with multiple dense + sparse vectors
+       - Dense-only Hybrid: Uses Qdrant RRF fusion with multiple dense vectors
+       - Traditional Search: Single dense vector search (backward compatibility)
+    5. Apply hard and negation filters natively in Qdrant during search
+    6. Apply Stage 1 score normalization (RRF scores → 0.5-0.95 range)
+    7. If soft filters present, fetch extra results and apply diminishing returns boosting
+    8. Apply Stage 2 score normalization if needed (post-boost → 0.5-0.95 range)
+    9. Re-rank by normalized scores and return top-k results
     
     Score Normalization System:
     This service implements a two-stage normalization system to ensure consistent
@@ -67,6 +74,23 @@ class SearchService:
     - Applied only when soft filters are used and scores exceed 0.5-0.95 range
     - Re-normalizes boosted scores back to 0.5-0.95 range
     - Preserves relative ranking while maintaining score consistency
+    
+    Search Modes:
+    Three search modes are automatically selected based on configuration and available vectors:
+    
+    1. **Dense+Sparse Hybrid Search** (enable_hybrid=True + sparse_vector available):
+       - Combines multiple dense vectors (HyDE personas) with sparse keywords vector
+       - Uses Qdrant native RRF (Reciprocal Rank Fusion) for optimal ranking
+       - Best semantic coverage and keyword precision
+       
+    2. **Dense-only Hybrid Search** (enable_hybrid=True + multiple dense vectors):
+       - Uses RRF fusion with multiple dense vectors from HyDE personas
+       - No sparse vector component
+       - Better than single vector, less comprehensive than dense+sparse
+       
+    3. **Traditional Search** (enable_hybrid=False or single dense vector):
+       - Single dense vector search for backward compatibility
+       - Fastest option but lowest semantic coverage
     
     Score Semantics:
     - Returned scores represent ranking/sorting priority, NOT raw vector similarity
@@ -111,6 +135,25 @@ class SearchService:
         """
         Unified search with query processing, embedding generation, and filtering.
         
+        This method provides backward compatibility by returning only search results.
+        For access to query analysis data (including llm_query), use unified_search_with_analysis().
+        """
+        results, _ = self.unified_search_with_analysis(
+            query, top_k, score_threshold, enable_hybrid, progress_callback
+        )
+        return results
+    
+    def unified_search_with_analysis(
+        self, 
+        query: str,  # Raw query string to process and search
+        top_k: int, 
+        score_threshold: Optional[float] = None,
+        enable_hybrid: Optional[bool] = None,  # Optional override for global config
+        progress_callback: Optional[ProgressCallback] = None  # Optional progress updates
+    ) -> tuple[List[ScoredPoint], Dict[str, Any]]:
+        """
+        Unified search with query processing, embedding generation, and filtering.
+        
         Analyzes the query using QueryRewriter to extract filters and rewrite the query,
         then performs vector search with automatic filter application and score boosting.
         
@@ -122,7 +165,9 @@ class SearchService:
             progress_callback: Optional callback for progress updates during search
         
         Returns:
-            List of top_k ScoredPoint objects with normalized scores (0.5-0.95 range)
+            Tuple of:
+            - List of top_k ScoredPoint objects with normalized scores (0.5-0.95 range)
+            - Dictionary containing query analysis data (including llm_query for LLM prompting)
             
         Note on Returned Scores:
             All returned scores are normalized through our two-stage normalization system:
@@ -154,32 +199,59 @@ class SearchService:
             soft_filters = query_analysis.get('soft_filters', {})
             
             if progress_callback:
-                progress_callback("query_analyzed", {
-                    "embedding_texts": embedding_texts,
-                    "embedding_text": embedding_text,
+                # Determine what embedding data to send based on hybrid setting
+                callback_data = {
                     "strategy": strategy,
                     "original_query": query,
                     "hard_filters": hard_filters,
                     "negation_filters": negation_filters,
                     "soft_filters": soft_filters,
-                    "source": query_analysis.get('source', 'unknown')
-                })
+                    "source": query_analysis.get('source', 'unknown'),
+                    "hybrid_enabled": enable_hybrid if enable_hybrid is not None else self.config.get('enable_hybrid', False)
+                }
+                
+                # Send appropriate embedding data based on hybrid mode
+                if callback_data["hybrid_enabled"]:
+                    # Hybrid mode: send full embedding_texts for multi-vector display
+                    callback_data["embedding_texts"] = embedding_texts
+                    callback_data["embedding_text"] = embedding_text  # Keep for backward compatibility
+                else:
+                    # Traditional mode: send only single embedding_text for single-vector display
+                    callback_data["embedding_text"] = embedding_text
+                    # Don't send embedding_texts to avoid confusion in CLI display
+                
+                progress_callback("query_analyzed", callback_data)
             
             # Convert empty dicts to None for cleaner processing
             final_hard_filters = hard_filters if hard_filters else None
             final_negation_filters = negation_filters if negation_filters else None
             final_soft_filters = soft_filters if soft_filters else None
             
-            # Step 3: Generate dense embedding (always required)
-            logger.debug(f"Generating dense embedding for: {embedding_text}")
-            dense_vector = self.dense_embedding_client.get_embedding(embedding_text)
-            
-            # Step 4: Generate sparse embedding if hybrid enabled
-            sparse_vector = None
+            # Step 3: Generate dense embeddings (single or multiple based on hybrid setting)
+            dense_vectors = []
             hybrid_enabled = enable_hybrid if enable_hybrid is not None else self.config.get('enable_hybrid', False)
+            
+            if hybrid_enabled and strategy == 'hyde' and 'hyde' in embedding_texts and embedding_texts['hyde']:
+                # Hybrid mode + HyDE strategy: generate multiple dense vectors from all personas
+                hyde_texts = embedding_texts['hyde'] if isinstance(embedding_texts['hyde'], list) else [embedding_texts['hyde']]
+                logger.debug(f"Generating {len(hyde_texts)} dense embeddings for HyDE personas (hybrid mode)")
+                for i, hyde_text in enumerate(hyde_texts):
+                    logger.debug(f"Generating dense embedding for HyDE persona {i+1}: {hyde_text[:100]}...")
+                    dense_vector = self.dense_embedding_client.get_embedding(hyde_text)
+                    dense_vectors.append(dense_vector)
+            else:
+                # Traditional mode OR rewrite strategy: generate single dense vector only
+                logger.debug(f"Generating single dense embedding for: {embedding_text}")
+                dense_vector = self.dense_embedding_client.get_embedding(embedding_text)
+                dense_vectors.append(dense_vector)
+            
+            # Step 4: Generate sparse embedding if hybrid enabled (always from rewrite text for keywords)
+            sparse_vector = None
             if hybrid_enabled and self.sparse_embedding_client and self.sparse_embedding_client.has_sparse_embedding():
-                logger.debug("Generating sparse embedding for hybrid search")
-                sparse_vector = self.sparse_embedding_client.get_sparse_embedding(embedding_text)
+                # Always use rewrite text for sparse vector (keyword-based)
+                sparse_text = embedding_texts.get('rewrite', embedding_text)
+                logger.debug(f"Generating sparse embedding from keywords: {sparse_text}")
+                sparse_vector = self.sparse_embedding_client.get_sparse_embedding(sparse_text)
             
             # Step 5: Determine fetch limit for re-ranking
             has_soft_filters = final_soft_filters and any(final_soft_filters.values())
@@ -189,12 +261,13 @@ class SearchService:
             if progress_callback:
                 progress_callback("search_ready", {})
             
-            logger.debug(f"Performing vector search with limit={fetch_limit}")
+            logger.debug(f"Performing vector search with {len(dense_vectors)} dense vectors, limit={fetch_limit}")
+            logger.debug(f"Hybrid search enabled: {hybrid_enabled}")
             logger.debug(f"Hard filters being passed to Qdrant: {final_hard_filters}")
             logger.debug(f"Negation filters being passed to Qdrant: {final_negation_filters}")
             initial_results = self._search_with_vectors(
-                dense_vector, sparse_vector, fetch_limit, 
-                final_hard_filters, final_negation_filters, score_threshold
+                dense_vectors, sparse_vector, fetch_limit, 
+                final_hard_filters, final_negation_filters, score_threshold, hybrid_enabled
             )
             
             if not initial_results:
@@ -203,7 +276,7 @@ class SearchService:
                     progress_callback("search_complete", {
                         "result_count": 0
                     })
-                return []
+                return [], query_analysis
             
             logger.info(f"Initial search returned {len(initial_results)} results")
             if progress_callback:
@@ -221,47 +294,74 @@ class SearchService:
                 final_results = boosted_results[:top_k]
                 
                 logger.info(f"Soft filtering boosted and re-ranked to {len(final_results)} results")
-                return final_results
+                return final_results, query_analysis
             else:
                 logger.debug("No soft filters provided, returning initial results")
-                return initial_results
+                return initial_results, query_analysis
                 
         except Exception as e:
             logger.error(f"Unified search failed: {e}")
-            return []
+            return [], {}
     
     def _search_with_vectors(
         self,
-        dense_vector: List[float],
+        dense_vectors: List[List[float]],  # Changed to support multiple dense vectors
         sparse_vector: Optional[Dict[str, Any]],
         limit: int,
         hard_filters: Optional[Dict[str, Any]] = None,
         negation_filters: Optional[Dict[str, Any]] = None,
-        score_threshold: Optional[float] = None
+        score_threshold: Optional[float] = None,
+        enable_hybrid: bool = False
     ) -> List[ScoredPoint]:
         """
         Perform vector search with dense and optionally sparse vectors.
         
         Args:
-            dense_vector: Dense embedding vector
+            dense_vectors: List of dense embedding vectors (keywords + HyDE personas)
             sparse_vector: Optional sparse embedding vector for hybrid search
             limit: Number of results to return
             hard_filters: Must-match metadata filters
             negation_filters: Must-NOT-match metadata filters  
             score_threshold: Minimum similarity score threshold
+            enable_hybrid: Whether to use hybrid search with RRF fusion
             
         Returns:
             List of ScoredPoint objects from vector search
         """
-        # For now, use only dense vector search
-        # TODO: Implement hybrid search combining dense + sparse vectors when sparse_vector is provided
-        return self.qdrant_db.search(
-            query_vector=dense_vector,
-            limit=limit,
-            score_threshold=score_threshold,
-            filters=hard_filters,
-            negation_filters=negation_filters
-        )
+        # Use hybrid search when sparse vector provided and hybrid enabled
+        if enable_hybrid and sparse_vector and len(dense_vectors) > 0:
+            logger.debug(f"Using hybrid search with {len(dense_vectors)} dense vectors and sparse vector")
+            return self.qdrant_db.hybrid_search(
+                dense_vectors=dense_vectors,
+                sparse_vector=sparse_vector,
+                limit=limit,
+                score_threshold=score_threshold,
+                filters=hard_filters,
+                negation_filters=negation_filters
+            )
+        
+        # Use hybrid search with multiple dense vectors only (no sparse)
+        elif enable_hybrid and len(dense_vectors) > 1:
+            logger.debug(f"Using hybrid search with {len(dense_vectors)} dense vectors (no sparse)")
+            return self.qdrant_db.hybrid_search(
+                dense_vectors=dense_vectors,
+                sparse_vector=None,
+                limit=limit,
+                score_threshold=score_threshold,
+                filters=hard_filters,
+                negation_filters=negation_filters
+            )
+        
+        # Fall back to traditional single dense vector search
+        else:
+            logger.debug("Using traditional single dense vector search")
+            return self.qdrant_db.search(
+                query_vector=dense_vectors[0],  # Use first dense vector
+                limit=limit,
+                score_threshold=score_threshold,
+                filters=hard_filters,
+                negation_filters=negation_filters
+            )
     
     def _apply_soft_filter_boosting(
         self, 

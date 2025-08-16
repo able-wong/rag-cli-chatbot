@@ -6,7 +6,8 @@ A command-line chatbot with Retrieval-Augmented Generation (RAG) capabilities. S
 
 - **Interactive CLI Interface**: Rich terminal interface with colors and formatting
 - **RAG Capabilities**: Search and retrieve information from knowledge base
-- **Hybrid Search**: Natural language metadata filtering (author, date, tags)
+- **Dense+Sparse Hybrid Search**: RRF fusion with SPLADE sparse embeddings and multi-persona dense vectors
+- **Intent-Based Metadata Filtering**: Natural language metadata filtering (author, date, tags)
 - **Dual Retrieval Strategies**: Choose between keyword-based "rewrite" or semantic "HyDE" search
 - **Conversational Context Awareness**: Intelligent follow-up handling without re-searching
 - **LLM-Based Query Transformation**: Smart query analysis and routing for better results
@@ -97,6 +98,31 @@ embedding:
   model: "nomic-embed-text"
 ```
 
+### Sparse Embedding Setup (for Dense+Sparse Hybrid Search)
+
+**SPLADE (Recommended for Hybrid Search)**:
+```yaml
+sparse_embedding:
+  provider: "splade"
+  splade:
+    model: "naver/splade-cocondenser-ensembledistil"
+    device: "cpu"  # Use "cuda" if you have a GPU
+```
+
+**Alternative SPLADE Models**:
+```yaml
+sparse_embedding:
+  provider: "splade"
+  splade:
+    model: "naver/splade-cocondenser-selfdistil"  # Lighter model
+    device: "cpu"
+```
+
+**Requirements**:
+- Python packages: `transformers`, `torch` (included in requirements.txt)
+- Model auto-downloads on first use (~500MB)
+- Optional: GPU support for faster sparse embedding generation
+
 ### Vector Database Setup
 
 **Local Qdrant**:
@@ -183,17 +209,90 @@ Student: "I'm studying how neural networks mimic the human brain to recognize pa
 
 This multi-persona approach is especially effective for complex queries where different documents may approach the same topic from varying expertise levels or professional contexts.
 
+### Dense+Sparse Vector Hybrid Search (RRF)
+
+**Advanced Vector Fusion**: The application supports dense+sparse vector hybrid search using Qdrant's native Reciprocal Rank Fusion (RRF) for optimal ranking accuracy.
+
+**Enable Dense+Sparse Hybrid Search**:
+```yaml
+rag:
+  use_hybrid_search: true          # Enables advanced search features (vector hybrid search and intent-based filtering)
+  retrieval_strategy: "hyde"       # Works with both rewrite and hyde strategies
+  trigger_phrase: "@knowledgebase"
+
+# Sparse embedding configuration (required for full hybrid search)
+sparse_embedding:
+  provider: "splade"
+  splade:
+    model: "naver/splade-cocondenser-ensembledistil"
+    device: "cpu"
+```
+
+**Three Search Modes Available**:
+
+The system automatically selects the optimal search mode based on configuration:
+
+#### 🎯 Dense+Sparse Hybrid Search (Recommended)
+**Best Performance**: Combines semantic understanding with keyword precision
+- **Dense vectors**: Multiple embeddings from HyDE personas (semantic context)
+- **Sparse vectors**: Keyword-based embeddings from SPLADE (exact term matching)
+- **Fusion**: Qdrant native RRF ranks results optimally
+- **Benefits**: Highest accuracy, handles both conceptual and keyword queries
+
+#### 🔍 Dense-only Hybrid Search
+**Good Performance**: Multi-vector semantic search without sparse component
+- **Dense vectors**: Multiple HyDE personas or single rewrite embedding
+- **Fusion**: RRF ranks multiple dense vector results
+- **Benefits**: Better than single vector, no sparse embedding setup required
+
+#### ⚡ Traditional Search
+**Basic Performance**: Single dense vector search (backward compatibility)
+- **Dense vector**: Single embedding from keywords or first HyDE persona
+- **Benefits**: Fastest option, minimal configuration required
+
+**Vector Generation Strategy**:
+
+| Strategy | Dense Vectors | Sparse Vector | RRF Usage |
+|----------|---------------|---------------|-----------|
+| **HyDE + Hybrid** | 3 personas (Prof, Teacher, Student) | Keywords from rewrite | ✅ Full RRF |
+| **Rewrite + Hybrid** | 1 keywords vector | Keywords from rewrite | ✅ Sparse RRF |
+| **HyDE only** | 3 personas | None | ✅ Dense RRF |
+| **Traditional** | 1 vector | None | ❌ No RRF |
+
+**RRF Benefits**:
+- **Improved Ranking**: Combines multiple search perspectives for better relevance
+- **Semantic + Keyword**: Dense vectors capture meaning, sparse vectors catch exact terms
+- **Native Performance**: Qdrant handles fusion efficiently without client-side processing
+- **Score Consistency**: Normalized scores (0.5-0.95 range) across all search modes
+
+**Requirements for Full Hybrid Search**:
+- Qdrant collection with named dense and sparse vectors: `"dense"` and `"sparse"`
+- SPLADE model for sparse embedding generation (auto-downloaded on first use)
+- Python dependencies: `transformers`, `torch` (added to requirements.txt)
+
+**Example Hybrid Search Flow**:
+1. User query: `@knowledgebase explain neural networks`
+2. **Dense vectors** generated from 3 HyDE personas:
+   - Professor: "Neural networks utilize backpropagation algorithms..."
+   - Teacher: "Neural networks learn by adjusting connections..."
+   - Student: "I'm studying how neural networks mimic the brain..."
+3. **Sparse vector** generated from keywords: `"neural networks explanation"`
+4. **RRF fusion** ranks all results for optimal relevance
+5. Results combine semantic understanding with keyword precision
+
 ### Hybrid Search with Intent-Based Patterns
 
 **Enhanced RAG System**: The application now uses intent-based pattern detection to intelligently handle different types of queries with natural language metadata filtering.
 
-**Enable Hybrid Search**:
+**Enable Intent-Based Metadata Filtering**:
 ```yaml
 rag:
-  use_hybrid_search: true  # Enable natural language metadata filtering
+  use_hybrid_search: true  # Enables advanced search features (vector hybrid search and intent-based filtering)
   retrieval_strategy: "rewrite"  # Works with both rewrite and hyde
   trigger_phrase: "@knowledgebase"
 ```
+
+**Note**: This is separate from the Dense+Sparse Vector Hybrid Search above. Both can be enabled together for maximum search sophistication.
 
 **Query Patterns:**
 
@@ -546,6 +645,7 @@ rag-cli-chatbot/
 - [x] Configuration management with environment variable support
 - [x] Multiple LLM providers (Ollama, Gemini)
 - [x] Multiple embedding providers (SentenceTransformers, Ollama, Gemini) 
+- [x] **Dense+Sparse Vector Hybrid Search** - RRF fusion with SPLADE sparse embeddings
 - [x] Qdrant vector database integration
 - [x] **Intent-Based Query Patterns** - automatic detection of search vs. question vs. search+action intents
 - [x] **Three-Pattern System** - Pure Search, Search+Action, Direct Questions with different behaviors
@@ -567,7 +667,6 @@ rag-cli-chatbot/
 ## 🔮 Future Enhancements
 
 - **Document Ingestion Pipeline**: Automated document processing and chunking
-- **Hybrid Search**: Combine vector and keyword search with reciprocal rank fusion
 - **Re-ranking**: Advanced result scoring and ordering with cross-encoder models
 - **Implicit RAG**: Automatic knowledge base routing without trigger phrases
 - **Query Expansion**: Multi-query generation for comprehensive retrieval
