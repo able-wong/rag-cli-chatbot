@@ -1394,8 +1394,8 @@ class TestQdrantIntegration:
         )
         
         if len(baseline_results) > 2:
-            # Use middle score as threshold
-            threshold = baseline_results[2].score
+            # Use a fixed similarity score as threshold
+            threshold = 0.8  # Example: Use a plausible raw similarity score
             
             filtered_results = self.qdrant_db.hybrid_search(
                 dense_vectors=dense_vectors,

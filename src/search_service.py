@@ -358,23 +358,12 @@ class SearchService:
             target_min = 0.5
             target_range = target_max - target_min
             
-            normalized_results = []
             for result in results:
                 # Normalize: (score - min) / range * target_range + target_min
-                normalized_score = ((result.score - min_score) / score_range) * target_range + target_min
-                
-                # Create new ScoredPoint with normalized score
-                normalized_result = ScoredPoint(
-                    id=result.id,
-                    version=result.version,
-                    score=normalized_score,
-                    payload=result.payload,
-                    vector=result.vector
-                )
-                normalized_results.append(normalized_result)
+                result.score = ((result.score - min_score) / score_range) * target_range + target_min
             
             logger.debug(f"Stage 2: Normalized boosted scores from [{min_score:.3f}-{max_score:.3f}] to [0.5-0.95] range")
-            return normalized_results
+            return results
             
         except Exception as e:
             logger.error(f"Error in stage 2 score normalization: {e}")

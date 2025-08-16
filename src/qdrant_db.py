@@ -342,7 +342,7 @@ class QdrantDB:
     
     def _normalize_rrf_scores(self, results: List[ScoredPoint]) -> List[ScoredPoint]:
         """
-        Normalize RRF scores to 0-1 range for backward compatibility with thresholds and soft filtering.
+        Normalize RRF scores to a 0.5-0.95 range for consistency and compatibility.
         
         RRF scores follow the pattern 1/(60+rank), giving values like:
         - Rank 1: 1/61 ≈ 0.016 → normalized to ~0.95
