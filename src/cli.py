@@ -875,18 +875,17 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 rag_results, query_analysis = self._perform_rag_search(user_input)
                 self.last_rag_results = rag_results
                 use_rag = len(rag_results) > 0  # SearchService returns empty results if no search needed
-                
+                                    
                 if use_rag:
+                    # Use proper LLM query from SearchService query analysis
+                    llm_query = user_input  # Default fallback
+                    if query_analysis and 'llm_query' in query_analysis:
+                        llm_query = query_analysis['llm_query']
+                        logger.debug(f"Using analyzed LLM query: '{llm_query}' (original: '{user_input}')")
+
                     if self._should_use_rag_context(rag_results):
                         # Use RAG context with rewritten query as LLM query
                         context = self._build_rag_context(rag_results)
-                        
-                        # Use proper LLM query from SearchService query analysis
-                        llm_query = user_input  # Default fallback
-                        if query_analysis and 'llm_query' in query_analysis:
-                            llm_query = query_analysis['llm_query']
-                            logger.debug(f"Using analyzed LLM query: '{llm_query}' (original: '{user_input}')")
-                        
                         prompt = self._build_prompt_with_context(llm_query, context)
                     else:
                         # No relevant context found
