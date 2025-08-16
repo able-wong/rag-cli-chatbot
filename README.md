@@ -216,7 +216,7 @@ This multi-persona approach is especially effective for complex queries where di
 **Enable Dense+Sparse Hybrid Search**:
 ```yaml
 rag:
-  use_hybrid_search: true          # Enable vector hybrid search with RRF fusion
+  use_hybrid_search: true          # Enables advanced search features (vector hybrid search and intent-based filtering)
   retrieval_strategy: "hyde"       # Works with both rewrite and hyde strategies
   trigger_phrase: "@knowledgebase"
 
@@ -287,7 +287,7 @@ The system automatically selects the optimal search mode based on configuration:
 **Enable Intent-Based Metadata Filtering**:
 ```yaml
 rag:
-  use_hybrid_search: true  # Enable natural language metadata filtering (intent-based patterns)
+  use_hybrid_search: true  # Enables advanced search features (vector hybrid search and intent-based filtering)
   retrieval_strategy: "rewrite"  # Works with both rewrite and hyde
   trigger_phrase: "@knowledgebase"
 ```
