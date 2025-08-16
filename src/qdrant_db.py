@@ -136,12 +136,41 @@ class QdrantDB:
             dense_vectors: List of dense embeddings (keywords + HyDE personas)
             sparse_vector: Sparse vector dictionary with indices and values
             limit: Maximum number of results to return
-            score_threshold: Minimum similarity score threshold
+            score_threshold: Minimum similarity score threshold (applied BEFORE RRF fusion)
             filters: Dictionary of positive filters (must match)
             negation_filters: Dictionary of negation filters (must NOT match)
         
         Returns:
-            List of ScoredPoint objects ranked by RRF fusion
+            List of ScoredPoint objects ranked by RRF fusion with normalized scores
+            
+        Score Handling Philosophy:
+            This method implements a two-stage normalization system designed for consistency
+            and compatibility with soft filter boosting systems.
+            
+            IMPORTANT: Returned scores represent ranking/sorting priority, NOT raw similarity.
+            We deliberately trade raw similarity information for fusion and consistency benefits.
+            
+            Stage 1 - RRF Normalization (Always Applied):
+            - Raw RRF scores (1/(60+rank)) are normalized to 0.5-0.95 range
+            - Ensures consistent scale across single/multi-vector searches
+            - Enables predictable soft filter boosting calculations
+            
+            Stage 2 - Post-Boosting Normalization (Applied by SearchService):
+            - After soft filters apply percentage boosts, scores may exceed 0.95
+            - SearchService re-normalizes back to 0.5-0.95 range if needed
+            - Maintains score consistency regardless of boosting applied
+            
+            Score Threshold Behavior:
+            - score_threshold filters individual vector similarities BEFORE RRF fusion
+            - This is semantically correct: "minimum similarity to consider relevant"
+            - NOT applied to post-fusion ranking scores (which would be arbitrary)
+            
+            Trade-offs:
+            - ✅ Consistent score ranges across all search types
+            - ✅ Predictable soft filter boosting behavior  
+            - ✅ Threshold filtering preserves semantic meaning
+            - ❌ Loss of original vector similarity information
+            - ❌ Scores no longer directly interpretable as similarity measures
         """
         try:
             if not self.collection_exists():
@@ -158,13 +187,17 @@ class QdrantDB:
             
             # Add dense vector prefetches (keywords + HyDE personas)
             for i, dense_vector in enumerate(dense_vectors):
-                prefetch_queries.append(
-                    Prefetch(
-                        query=dense_vector,
-                        using="dense",
-                        limit=limit * 2  # Fetch more for better RRF fusion
-                    )
-                )
+                prefetch_params = {
+                    "query": dense_vector,
+                    "using": "dense",
+                    "limit": limit * 2  # Fetch more for better RRF fusion
+                }
+                
+                # Apply score threshold to individual vector searches before fusion
+                if score_threshold is not None:
+                    prefetch_params["score_threshold"] = score_threshold
+                
+                prefetch_queries.append(Prefetch(**prefetch_params))
             
             # Add sparse vector prefetch if provided
             if sparse_vector and sparse_vector.get("indices") and sparse_vector.get("values"):
@@ -172,13 +205,18 @@ class QdrantDB:
                     indices=sparse_vector["indices"],
                     values=sparse_vector["values"]
                 )
-                prefetch_queries.append(
-                    Prefetch(
-                        query=sparse_query,
-                        using="sparse",
-                        limit=limit * 2
-                    )
-                )
+                
+                sparse_prefetch_params = {
+                    "query": sparse_query,
+                    "using": "sparse",
+                    "limit": limit * 2
+                }
+                
+                # Apply score threshold to sparse vector search before fusion
+                if score_threshold is not None:
+                    sparse_prefetch_params["score_threshold"] = score_threshold
+                
+                prefetch_queries.append(Prefetch(**sparse_prefetch_params))
                 logger.info(f"Added sparse vector to hybrid search with {len(sparse_vector['indices'])} dimensions")
             else:
                 logger.warning("Sparse vector not provided or invalid, using dense-only hybrid search")
@@ -192,8 +230,10 @@ class QdrantDB:
                 "with_payload": True
             }
             
+            # Score threshold is now applied at prefetch level (individual vector searches)
+            # This ensures filtering happens BEFORE RRF fusion, preserving semantic meaning
             if score_threshold is not None:
-                query_params["score_threshold"] = score_threshold
+                logger.debug(f"Applied score threshold {score_threshold} to individual prefetch queries before RRF fusion")
             
             # Build combined filter with both positive and negative conditions
             if filters or negation_filters:
@@ -214,8 +254,16 @@ class QdrantDB:
             # Perform hybrid search with RRF fusion
             results = self.client.query_points(**query_params).points
             
-            logger.info(f"Hybrid search found {len(results)} results using RRF fusion with {len(dense_vectors)} dense vectors")
-            return results
+            # Always normalize RRF scores for consistency across single/multi-vector searches
+            if results:
+                # Stage 1: Normalize all RRF scores to 0.5-0.95 range
+                # This ensures consistent scale for soft filter boosting and threshold compatibility
+                normalized_results = self._normalize_rrf_scores(results)
+                logger.info(f"Hybrid search found {len(normalized_results)} results using RRF fusion with {len(dense_vectors)} dense vectors (scores normalized)")
+                return normalized_results
+            else:
+                logger.info(f"Hybrid search found 0 results using RRF fusion with {len(dense_vectors)} dense vectors")
+                return results
             
         except Exception as e:
             logger.error(f"Hybrid search failed: {e}")
@@ -291,6 +339,52 @@ class QdrantDB:
                 
         except Exception as e:
             logger.warning(f"Could not validate payload indexes: {e}. Hybrid search may have degraded performance.")
+    
+    def _normalize_rrf_scores(self, results: List[ScoredPoint]) -> List[ScoredPoint]:
+        """
+        Normalize RRF scores to 0-1 range for backward compatibility with thresholds and soft filtering.
+        
+        RRF scores follow the pattern 1/(60+rank), giving values like:
+        - Rank 1: 1/61 ≈ 0.016 → normalized to ~0.95
+        - Rank 2: 1/62 ≈ 0.016 → normalized to ~0.90
+        - etc.
+        
+        This preserves the relative ranking while making scores compatible with 
+        existing threshold and boost calculations.
+        """
+        if not results:
+            return results
+        
+        try:
+            # Calculate normalization parameters
+            max_score = max(result.score for result in results)
+            min_score = min(result.score for result in results)
+            
+            # Avoid division by zero
+            if max_score == min_score:
+                # All scores are identical, set them all to a high value
+                for result in results:
+                    result.score = 0.95
+                return results
+            
+            # Linear normalization to 0.95-0.5 range (preserves relative ranking)
+            # Higher range ceiling ensures top results still pass typical thresholds
+            score_range = max_score - min_score
+            target_max = 0.95
+            target_min = 0.5
+            target_range = target_max - target_min
+            
+            for result in results:
+                # Normalize: (score - min) / range * target_range + target_min
+                normalized_score = ((result.score - min_score) / score_range) * target_range + target_min
+                result.score = normalized_score
+            
+            logger.debug(f"Normalized RRF scores from [{min_score:.3f}-{max_score:.3f}] to [{target_min}-{target_max}] range")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Error normalizing RRF scores: {e}")
+            return results
     
     def _build_combined_filter(self, filters: Optional[Dict[str, Any]], negation_filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
         """

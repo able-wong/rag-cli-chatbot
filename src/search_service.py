@@ -49,8 +49,30 @@ class SearchService:
     1. Analyze query with QueryRewriter to extract filters and rewrite query if needed
     2. Generate dense (and optionally sparse) embeddings for the query
     3. Perform vector search with hard and negation filters applied, natively supported by Qdrant
-    4. If soft filters present, fetch extra results and apply diminishing returns boosting
-    5. Re-rank by boosted scores and return top-k results
+    4. Apply Stage 1 score normalization (RRF scores → 0.5-0.95 range)
+    5. If soft filters present, fetch extra results and apply diminishing returns boosting
+    6. Apply Stage 2 score normalization if needed (post-boost → 0.5-0.95 range)
+    7. Re-rank by normalized scores and return top-k results
+    
+    Score Normalization System:
+    This service implements a two-stage normalization system to ensure consistent
+    score ranges and predictable behavior across all search scenarios:
+    
+    Stage 1 - RRF Normalization (Always Applied):
+    - QdrantDB normalizes raw RRF scores (1/(60+rank)) to 0.5-0.95 range
+    - Ensures consistent scale for both single and multi-vector searches
+    - Enables predictable soft filter boosting calculations
+    
+    Stage 2 - Post-Boosting Normalization (Conditional):
+    - Applied only when soft filters are used and scores exceed 0.5-0.95 range
+    - Re-normalizes boosted scores back to 0.5-0.95 range
+    - Preserves relative ranking while maintaining score consistency
+    
+    Score Semantics:
+    - Returned scores represent ranking/sorting priority, NOT raw vector similarity
+    - Trade-off: We lose original similarity precision for fusion and consistency benefits
+    - All unified_search() results contain normalized scores in 0.5-0.95 range
+    - Score thresholds filter individual vector similarities before RRF fusion
     """
     
     def __init__(
@@ -100,7 +122,14 @@ class SearchService:
             progress_callback: Optional callback for progress updates during search
         
         Returns:
-            List of top_k ScoredPoint objects, re-ranked by boosted scores
+            List of top_k ScoredPoint objects with normalized scores (0.5-0.95 range)
+            
+        Note on Returned Scores:
+            All returned scores are normalized through our two-stage normalization system:
+            - Stage 1: RRF scores normalized to 0.5-0.95 range
+            - Stage 2: Re-normalized after soft filter boosting if needed
+            - Scores represent ranking priority, not raw vector similarity
+            - Consistent score range enables predictable threshold and boosting behavior
         """
         try:
             # Step 1: Analyze query using QueryRewriter
@@ -281,7 +310,75 @@ class SearchService:
             f"max boost: {boost_stats['max_boost']:.3f}, avg boost: {boost_stats['avg_boost']:.3f}"
         )
         
-        return boosted_results
+        # Stage 2 Normalization: Re-normalize scores to 0.5-0.95 range after boosting
+        # This ensures scores stay within expected range regardless of boost amount
+        normalized_results = self._normalize_boosted_scores(boosted_results)
+        
+        return normalized_results
+    
+    def _normalize_boosted_scores(self, results: List[ScoredPoint]) -> List[ScoredPoint]:
+        """
+        Stage 2 Normalization: Re-normalize scores after soft filter boosting.
+        
+        After applying percentage-based boosts, scores may exceed the 0.5-0.95 range.
+        This method re-normalizes them back to the consistent range while preserving
+        relative ranking order.
+        
+        Args:
+            results: List of ScoredPoint objects with potentially boosted scores
+            
+        Returns:
+            List of ScoredPoint objects with scores normalized to 0.5-0.95 range
+        """
+        if not results:
+            return results
+        
+        try:
+            # Calculate current score range
+            scores = [r.score for r in results]
+            max_score = max(scores)
+            min_score = min(scores)
+            
+            # Check if normalization is needed
+            if max_score <= 0.95 and min_score >= 0.5:
+                logger.debug("Scores already within 0.5-0.95 range, skipping 2nd normalization")
+                return results
+            
+            # Avoid division by zero
+            if max_score == min_score:
+                # All scores identical, set to high value
+                for result in results:
+                    result.score = 0.95
+                logger.debug("All boosted scores identical, normalized to 0.95")
+                return results
+            
+            # Linear normalization to 0.5-0.95 range
+            score_range = max_score - min_score
+            target_max = 0.95
+            target_min = 0.5
+            target_range = target_max - target_min
+            
+            normalized_results = []
+            for result in results:
+                # Normalize: (score - min) / range * target_range + target_min
+                normalized_score = ((result.score - min_score) / score_range) * target_range + target_min
+                
+                # Create new ScoredPoint with normalized score
+                normalized_result = ScoredPoint(
+                    id=result.id,
+                    version=result.version,
+                    score=normalized_score,
+                    payload=result.payload,
+                    vector=result.vector
+                )
+                normalized_results.append(normalized_result)
+            
+            logger.debug(f"Stage 2: Normalized boosted scores from [{min_score:.3f}-{max_score:.3f}] to [0.5-0.95] range")
+            return normalized_results
+            
+        except Exception as e:
+            logger.error(f"Error in stage 2 score normalization: {e}")
+            return results
     
     def _calculate_boost_multiplier(
         self, 

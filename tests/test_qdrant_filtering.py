@@ -435,7 +435,8 @@ def test_hybrid_search_basic_functionality(mock_qdrant_client_class):
         
         # Check results
         assert len(results) == 1
-        assert results[0].score == 0.9
+        # Score is normalized for multi-vector RRF (single result gets normalized to 0.95)
+        assert results[0].score == 0.95
 
 
 @patch('qdrant_db.QdrantClient')
@@ -615,9 +616,14 @@ def test_hybrid_search_score_threshold(mock_qdrant_client_class):
         mock_client.query_points.assert_called_once()
         call_args = mock_client.query_points.call_args[1]
         
-        # Check score threshold was passed
-        assert 'score_threshold' in call_args
-        assert call_args['score_threshold'] == 0.7
+        # Check score threshold was applied to prefetch queries, not query_points level
+        assert 'score_threshold' not in call_args
+        
+        # Check that score threshold was applied to individual prefetch queries
+        prefetch_queries = call_args['prefetch']
+        for prefetch in prefetch_queries:
+            assert hasattr(prefetch, 'score_threshold')
+            assert prefetch.score_threshold == 0.7
 
 
 @patch('qdrant_db.QdrantClient')
