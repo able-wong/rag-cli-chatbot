@@ -183,6 +183,20 @@ class SearchService:
             
             logger.debug(f"Analyzing query: {query}")
             query_analysis = self.query_rewriter.transform_query(query)
+            
+            # Check if QueryRewriter determined that RAG search should be performed
+            should_search = query_analysis.get('search_rag', True)
+            if not should_search:
+                logger.info("QueryRewriter determined no RAG search needed, returning empty results")
+                if progress_callback:
+                    progress_callback("query_analyzed", {
+                        "strategy": query_analysis.get('strategy', 'rewrite'),
+                        "original_query": query,
+                        "search_rag": False,
+                        "reason": "QueryRewriter determined no search needed (empty query or no trigger phrase)"
+                    })
+                return [], query_analysis
+            
             embedding_texts = query_analysis.get('embedding_texts', {})
             strategy = query_analysis.get('strategy', 'rewrite')
             

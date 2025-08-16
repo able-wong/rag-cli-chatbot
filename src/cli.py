@@ -447,38 +447,47 @@ class RAGCLI:
         elif stage == "query_analyzed":
             # Calculate elapsed time since analyzing started
             elapsed = current_time - self.callback_start_time if self.callback_start_time else 0
-            self.console.print(f"Query Analyzed in {elapsed:.2f} seconds")
             
             # Store data for later use and verbose display
             self.last_query_analyzed_data = data
             
-            # Show verbose details if enabled
-            if self.verbose:
-                strategy = data.get("strategy", "rewrite")
-                embedding_texts = data.get("embedding_texts", {})
-                embedding_text = data.get("embedding_text", "")
-                hard_filters = data.get("hard_filters", {})
-                negation_filters = data.get("negation_filters", {})
-                soft_filters = data.get("soft_filters", {})
-                source = data.get("source", "unknown")
+            # Check if search_rag is false (no search needed)
+            search_rag = data.get("search_rag", True)
+            if not search_rag:
+                # Query was analyzed but no search is needed
+                reason = data.get("reason", "No search needed")
+                self.console.print(f"Query Analyzed in {elapsed:.2f} seconds - {reason}")
+            else:
+                # Normal search flow - show full analysis
+                self.console.print(f"Query Analyzed in {elapsed:.2f} seconds")
                 
-                # Show strategy and source
-                self.console.print(f"  [dim]Strategy: {strategy}, Source: {source}[/dim]")
-                
-                # Show embedding details based on strategy and available data
-                self._show_verbose_embedding_details(strategy, embedding_texts, embedding_text)
-                
-                # Show filters if any exist
-                query_analysis = {
-                    'hard_filters': hard_filters,
-                    'negation_filters': negation_filters,
-                    'soft_filters': soft_filters
-                }
-                filter_display = self._format_three_filter_display(query_analysis)
-                if filter_display:
-                    self.console.print(f"  [dim]Filters: [{filter_display}][/dim]")
-                else:
-                    self.console.print("  [dim]Filters: None[/dim]")
+                # Show verbose details if enabled
+                if self.verbose:
+                    strategy = data.get("strategy", "rewrite")
+                    embedding_texts = data.get("embedding_texts", {})
+                    embedding_text = data.get("embedding_text", "")
+                    hard_filters = data.get("hard_filters", {})
+                    negation_filters = data.get("negation_filters", {})
+                    soft_filters = data.get("soft_filters", {})
+                    source = data.get("source", "unknown")
+                    
+                    # Show strategy and source
+                    self.console.print(f"  [dim]Strategy: {strategy}, Source: {source}[/dim]")
+                    
+                    # Show embedding details based on strategy and available data
+                    self._show_verbose_embedding_details(strategy, embedding_texts, embedding_text)
+                    
+                    # Show filters if any exist
+                    query_analysis = {
+                        'hard_filters': hard_filters,
+                        'negation_filters': negation_filters,
+                        'soft_filters': soft_filters
+                    }
+                    filter_display = self._format_three_filter_display(query_analysis)
+                    if filter_display:
+                        self.console.print(f"  [dim]Filters: [{filter_display}][/dim]")
+                    else:
+                        self.console.print("  [dim]Filters: None[/dim]")
             
             # Update timer for next stage
             self.callback_start_time = current_time
@@ -861,37 +870,26 @@ Is there anything else I can help you with, or would you like to rephrase your q
                         break  # Exit if /bye command
                     continue
                 
-                # Quick check for trigger phrase to decide on RAG vs regular chat
-                has_trigger = self.trigger_phrase.lower() in user_input.lower()
-                use_rag = has_trigger
-                
+                # Let SearchService (via QueryRewriter) decide if RAG search is needed
+                # This handles trigger phrase detection and query analysis semantically
+                rag_results, query_analysis = self._perform_rag_search(user_input)
+                self.last_rag_results = rag_results
+                use_rag = len(rag_results) > 0  # SearchService returns empty results if no search needed
+                                    
                 if use_rag:
-                    # Extract clean query by removing trigger phrase
-                    clean_query = user_input.replace(self.trigger_phrase, '').strip() if has_trigger else user_input
-                    
-                    # Only trigger RAG if there's content after the trigger phrase
-                    if not clean_query:
-                        use_rag = False
-                
-                if use_rag:
-                    # SearchService will handle all query analysis and progress updates via callback
-                    rag_results, query_analysis = self._perform_rag_search(clean_query)
-                    self.last_rag_results = rag_results
-                    
+                    # Use proper LLM query from SearchService query analysis
+                    llm_query = user_input  # Default fallback
+                    if query_analysis and 'llm_query' in query_analysis:
+                        llm_query = query_analysis['llm_query']
+                        logger.debug(f"Using analyzed LLM query: '{llm_query}' (original: '{user_input}')")
+
                     if self._should_use_rag_context(rag_results):
                         # Use RAG context with rewritten query as LLM query
                         context = self._build_rag_context(rag_results)
-                        
-                        # Use proper LLM query from SearchService query analysis
-                        llm_query = user_input  # Default fallback
-                        if query_analysis and 'llm_query' in query_analysis:
-                            llm_query = query_analysis['llm_query']
-                            logger.debug(f"Using analyzed LLM query: '{llm_query}' (original: '{user_input}')")
-                        
                         prompt = self._build_prompt_with_context(llm_query, context)
                     else:
                         # No relevant context found
-                        prompt = self._build_no_answer_prompt(clean_query)
+                        prompt = self._build_no_answer_prompt(llm_query)
                         rag_results = []  # Clear results since they're not relevant
                 else:
                     # Regular chat without RAG
