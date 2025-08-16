@@ -31,7 +31,7 @@ def create_mock_embedding_client():
     return mock_client
 
 
-def create_mock_query_rewriter(hard_filters=None, negation_filters=None, soft_filters=None):
+def create_mock_query_rewriter(hard_filters=None, negation_filters=None, soft_filters=None, search_rag=True):
     """Create a mock QueryRewriter for testing."""
     mock_rewriter = Mock()
     mock_rewriter.transform_query = Mock(return_value={
@@ -40,7 +40,8 @@ def create_mock_query_rewriter(hard_filters=None, negation_filters=None, soft_fi
         'negation_filters': negation_filters or {},
         'soft_filters': soft_filters or {},
         'strategy': 'rewrite',
-        'llm_query': 'Test LLM query for unit testing'
+        'llm_query': 'Test LLM query for unit testing',
+        'search_rag': search_rag
     })
     return mock_rewriter
 
@@ -1062,6 +1063,95 @@ def test_unified_search_with_analysis_returns_query_data():
     print("✓ unified_search_with_analysis returns query data test passed")
 
 
+def test_unified_search_respects_search_rag_false():
+    """Test unified_search returns empty results when search_rag is false."""
+    mock_db = create_mock_qdrant_db()
+    mock_dense_client = create_mock_embedding_client()
+    mock_query_rewriter = create_mock_query_rewriter(search_rag=False)  # QueryRewriter says no search needed
+    
+    search_service = SearchService(
+        qdrant_db=mock_db,
+        dense_embedding_client=mock_dense_client,
+        query_rewriter=mock_query_rewriter
+    )
+    
+    # Track progress callbacks
+    progress_updates = []
+    def progress_callback(stage, data):
+        progress_updates.append((stage, data))
+    
+    # Call unified_search_with_analysis with search_rag=False
+    query = "@knowledgebase "  # Empty query after trigger - should not search
+    results, query_analysis = search_service.unified_search_with_analysis(
+        query=query,
+        top_k=5,
+        progress_callback=progress_callback
+    )
+    
+    # Should return empty results without calling database
+    assert results == []
+    assert isinstance(query_analysis, dict)
+    assert not query_analysis['search_rag']
+    assert query_analysis['llm_query'] == 'Test LLM query for unit testing'
+    
+    # Should call query_rewriter but NOT call database search
+    mock_query_rewriter.transform_query.assert_called_once_with(query)
+    mock_db.search.assert_not_called()  # Database should not be called
+    mock_db.hybrid_search.assert_not_called()  # Hybrid search should not be called
+    mock_dense_client.get_embedding.assert_not_called()  # No embeddings generated
+    
+    # Should receive proper progress callbacks
+    assert len(progress_updates) >= 2  # "analyzing" and "query_analyzed"
+    stages = [update[0] for update in progress_updates]
+    assert "analyzing" in stages
+    assert "query_analyzed" in stages
+    
+    # Check query_analyzed callback contains reason
+    query_analyzed_data = next((data for stage, data in progress_updates if stage == "query_analyzed"), {})
+    assert not query_analyzed_data.get("search_rag")
+    assert "reason" in query_analyzed_data
+    
+    print("✓ unified_search respects search_rag=False test passed")
+
+
+def test_unified_search_backward_compatibility_search_rag_true():
+    """Test unified_search works normally when search_rag is true (default behavior)."""
+    mock_db = create_mock_qdrant_db()
+    mock_dense_client = create_mock_embedding_client()
+    mock_query_rewriter = create_mock_query_rewriter(search_rag=True)  # Normal search
+    
+    search_service = SearchService(
+        qdrant_db=mock_db,
+        dense_embedding_client=mock_dense_client,
+        query_rewriter=mock_query_rewriter
+    )
+    
+    # Mock search results
+    mock_results = [
+        create_mock_scored_point("1", 0.9, {"title": "Test Document 1"}),
+    ]
+    mock_db.search.return_value = mock_results
+    
+    # Call unified_search_with_analysis with search_rag=True
+    query = "@knowledgebase what is Python"
+    results, query_analysis = search_service.unified_search_with_analysis(
+        query=query,
+        top_k=5
+    )
+    
+    # Should proceed with normal search
+    assert results == mock_results
+    assert len(results) == 1
+    assert query_analysis['search_rag']
+    
+    # Should call all normal search operations
+    mock_query_rewriter.transform_query.assert_called_once_with(query)
+    mock_dense_client.get_embedding.assert_called_once()  # Embeddings generated
+    mock_db.search.assert_called_once()  # Database called
+    
+    print("✓ unified_search backward compatibility with search_rag=True test passed")
+
+
 if __name__ == "__main__":
     # Run all tests
     test_functions = [
@@ -1089,7 +1179,10 @@ if __name__ == "__main__":
         test_hybrid_search_mode_selection,
         test_search_with_vectors_method,
         test_enable_hybrid_parameter_override,
-        test_unified_search_with_analysis_returns_query_data
+        test_unified_search_with_analysis_returns_query_data,
+        # New search_rag tests  
+        test_unified_search_respects_search_rag_false,
+        test_unified_search_backward_compatibility_search_rag_true
     ]
     
     print("Running SearchService unit tests...")
