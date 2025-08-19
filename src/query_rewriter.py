@@ -97,7 +97,7 @@ KEY RULE: Use natural language understanding to detect intent. Everything goes t
   * Stop words: "the", "and", "of", "in", "from", "by", "about"  
   * Filter information: remove all filterable fields (author, tags, publication_date)
   * Keep only: core topic nouns and relevant descriptive terms
-- "hyde": Generate 3 short answers about the RAG search criteria (3-4 sentences each) from different expert perspectives. Choose appropriate personas based on the topic (examples: Professor/Teacher/Student for science, Director/Manager/Assistant for business, Expert/Educator/Learner for other topics). IMPORTANT: The examples below show placeholder text in brackets - you MUST replace these placeholders with actual knowledge-based content.
+- "hyde": Generate 3 short answers about the TOPIC ONLY from the RAG search criteria (3-4 sentences each) from different expert perspectives. Do NOT include specific author names, dates, or other filter information in the content - focus only on the core topic. Choose appropriate personas based on the topic (examples: Professor/Teacher/Student for science, Director/Manager/Assistant for business, Expert/Educator/Learner for other topics). CRITICAL: Do NOT copy the placeholder text shown in examples - generate your own actual knowledge-based content instead.
 
 **LLM Instruction Extraction:**
 - For Document Discovery Intent: Use placeholder "SEARCH_SUMMARY_MODE" (caller will convert to document summary instructions)
@@ -117,6 +117,8 @@ KEY RULE: Use natural language understanding to detect intent. Everything goes t
 - "soft_filters": object - Boost-if-match filters
 
 ## 6. Examples
+
+IMPORTANT: The following examples show placeholder text in brackets like "[Replace with...]" - these are FORMAT EXAMPLES ONLY. You must generate actual knowledge-based content, NOT copy the placeholder text.
 
 User: "What is Python?"
 Response: {{"search_rag": false, "embedding_texts": {{"rewrite": "", "hyde": ["", "", ""]}}, "llm_query": "Explain what Python is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
