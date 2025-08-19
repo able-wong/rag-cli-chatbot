@@ -15,6 +15,7 @@ from search_service import SearchService
 from qdrant_db import QdrantDB
 from embedding_client import EmbeddingClient
 from query_rewriter import QueryRewriter
+from llm_client import LLMClient
 from config_manager import ConfigManager
 from qdrant_client.models import PointStruct, SparseVector
 import random
@@ -44,10 +45,11 @@ class TestSearchServiceIntegration:
         embedding_config = config_manager.get('embedding', {})
         cls.dense_embedding_client = EmbeddingClient(embedding_config)
         
-        # Set up query rewriter
+        # Set up query rewriter with proper LLM client
         query_rewriter_config = config_manager.get('rag', {})
         llm_config = config_manager.get('llm', {})
-        cls.query_rewriter = QueryRewriter(query_rewriter_config, llm_config)
+        llm_client = LLMClient(llm_config)
+        cls.query_rewriter = QueryRewriter(llm_client, query_rewriter_config)
         
         # Create test collection and populate with test data
         cls._create_test_collection()
@@ -192,7 +194,7 @@ class TestSearchServiceIntegration:
         
         # Test traditional search
         results = search_service.unified_search(
-            query="neural networks machine learning",
+            query="@knowledgebase neural networks machine learning",
             top_k=3,
             enable_hybrid=False  # Explicitly disable hybrid
         )
@@ -219,7 +221,7 @@ class TestSearchServiceIntegration:
         
         # Test with HyDE strategy to generate multiple dense vectors
         results = search_service.unified_search(
-            query="explain neural networks and deep learning",
+            query="@knowledgebase explain neural networks and deep learning",
             top_k=3,
             enable_hybrid=True  # Enable hybrid for multi-vector
         )
@@ -245,7 +247,7 @@ class TestSearchServiceIntegration:
         
         # Test search with author filter
         results = search_service.unified_search(
-            query="search machine learning by Dr. Smith",
+            query="@knowledgebase search machine learning by Dr. Smith",
             top_k=5
         )
         
@@ -301,7 +303,7 @@ class TestSearchServiceIntegration:
         
         # Test search with progress callback
         search_service.unified_search(
-            query="neural networks",
+            query="@knowledgebase neural networks",
             top_k=3,
             progress_callback=progress_callback
         )

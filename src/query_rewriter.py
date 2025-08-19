@@ -31,62 +31,107 @@ class QueryRewriter:
 
     def _build_unified_system_prompt(self) -> str:
         """Build the unified system prompt for query transformation that returns both rewrite and hyde formats."""
-        return f"""Transform user queries into structured format for retrieval. Return both keyword and hypothetical document formats.
+        return f"""# Query Transformation Instructions
 
-**RESPONSE FORMAT** (JSON only):
+## 1. Overview
+
+IF user prompt contains "{self.trigger_phrase}":
+- Transform user queries into structured format for retrieval
+- Split user prompt into RAG search criteria and LLM instructions
+- Extract filters from RAG search criteria  
+- Generate both keywords and knowledge-based answers for the RAG search criteria only
+
+IF user prompt does NOT contain "{self.trigger_phrase}":
+- Set "search_rag": false
+- Set all filters to empty objects
+- Set embedding_texts to empty values 
+- Transform user query into clean LLM instruction format
+
+## 2. Prompt Splitting Rules
+
+Use natural language understanding to identify user intent and split accordingly into one of 3 patterns:
+
+1. **Document Discovery Intent** - User wants to find/browse documents
+   - User is seeking to discover or locate documents/information  
+   - Split: Document-seeking portion → RAG criteria | Use "SEARCH_SUMMARY_MODE" → LLM instruction
+
+2. **Search + Analysis Intent** - User wants to find documents AND perform analysis
+   - User wants to retrieve information and then do something with it
+   - Split: Retrieval portion → RAG criteria | Analytical action → LLM instruction
+
+3. **Direct Question Intent** - User asks direct questions about topics
+   - User is asking for explanations or information about concepts
+   - Split: Question topic → RAG criteria | Question format → LLM instruction
+
+**Splitting Examples:**
+- "find papers by Smith" → RAG: "papers by Smith" | LLM: "SEARCH_SUMMARY_MODE"
+- "locate research by Smith and explain findings" → RAG: "research by Smith" | LLM: "explain findings"  
+- "{self.trigger_phrase} what is machine learning" → RAG: "machine learning" | LLM: "what is machine learning"
+
+## 3. Filter Extraction
+
+Extract filters from RAG search criteria only when "{self.trigger_phrase}" present in user prompt.
+
+**Supported filterable fields:** author, tags, publication_date
+
+**Filter Types:**
+- **Soft filters**: DEFAULT for ALL mentions - boost relevance but don't exclude ("papers by Smith", "from 2024", "tagged Python")
+- **Hard filters**: Use when user expresses restrictive/exclusive intent (examples: "only", "just", "exclusively" and similar limiting language)
+- **Negation filters**: Use when user expresses exclusion/avoidance intent (examples: "not", "without", "except" and similar excluding language)
+
+**Date Format Conversion:**
+For publication_date filters, convert date mentions to start/end date range format:
+- "2024" → {{"gte": "2024-01-01", "lt": "2025-01-01"}}
+- "from 2024" → {{"gte": "2024-01-01"}}
+- "before 2024" → {{"lt": "2024-01-01"}}
+- "in March 2024" → {{"gte": "2024-03-01", "lt": "2024-04-01"}}
+- Use best guess for ambiguous dates and always provide gte/lt format when possible
+
+KEY RULE: Use natural language understanding to detect intent. Everything goes to soft_filters unless clearly expressing restrictive or exclusion intent.
+
+## 4. Content Generation
+
+**embedding_texts Generation:**
+- "rewrite": Extract clean topic keywords from RAG search criteria, removing:
+  * Action words: "find", "search", "get", "show", "locate", "retrieve"
+  * Stop words: "the", "and", "of", "in", "from", "by", "about"  
+  * Filter information: remove all filterable fields (author, tags, publication_date)
+  * Keep only: core topic nouns and relevant descriptive terms
+- "hyde": Generate 3 short answers about the RAG search criteria (3-4 sentences each) from different expert perspectives. Choose appropriate personas based on the topic (examples: Professor/Teacher/Student for science, Director/Manager/Assistant for business, Expert/Educator/Learner for other topics). IMPORTANT: The examples below show placeholder text in brackets - you MUST replace these placeholders with actual knowledge-based content.
+
+**LLM Instruction Extraction:**
+- For Document Discovery Intent: Use placeholder "SEARCH_SUMMARY_MODE" (caller will convert to document summary instructions)
+- For Search + Analysis Intent: Extract the analytical action and format as "Based on the provided context, [action]"
+- For Direct Question Intent: Format as "Based on the provided context, [question]"
+- Remove trigger phrase ("{self.trigger_phrase}") from all instructions
+- Remove filter clauses from instructions
+
+## 5. Response Format
+
+**JSON Structure (JSON only):**
 - "search_rag": boolean - True if query contains "{self.trigger_phrase}"
 - "embedding_texts": {{"rewrite": "keywords", "hyde": ["doc1", "doc2", "doc3"]}}
 - "llm_query": string - LLM instruction
 - "hard_filters": object - Must-match filters
-- "negation_filters": object - Must-NOT-match filters  
+- "negation_filters": object - Must-NOT-match filters
 - "soft_filters": object - Boost-if-match filters
 
-**EMBEDDING GENERATION**:
-- "rewrite": Extract core topic keywords only
-- "hyde": Generate 3 short hypothetical documents (1-2 sentences each) from different perspectives:
-  * Science topics: Professor/Teacher/Student views
-  * Business topics: Director/Manager/Assistant views
-  * Other topics: Expert/Educator/Learner views
-
-**FILTER FIELDS** (only when "{self.trigger_phrase}" present):
-Supported filterable fields: author, tags, publication_date
-
-**FILTER TYPES**:
-- **Soft filters**: DEFAULT for ALL mentions - boost relevance but don't exclude ("papers by Smith", "from 2024", "tagged Python")
-- **Hard filters**: Restrictive intent requiring exclusive matching - detect words/phrases expressing limitation (examples: 'only', 'just', 'exclusively', 'must be', 'restrict to', 'limited to', 'solely')
-- **Negation filters**: Exclusion intent to avoid criteria - detect words/phrases expressing avoidance (examples: 'not', 'without', 'except', 'excluding', 'avoid', 'skip')
-- **Empty filters**: Pure questions without search intent
-
-KEY RULE: Use intent-based detection, not exact keyword matching. Everything goes to soft_filters unless expressing clear restrictive or exclusion intent.
-
-**LLM QUERY CLEANING**:
-- Remove search instructions ("find", "search", "look for", "retrieve", "get", "show", "list")
-- Remove filter clauses for FILTER FIELDS above (author restrictions, date limits, tag filters)
-- Remove trigger phrase ("{self.trigger_phrase}")
-- Transform into clean question format: "Based on the provided context, explain/analyze/describe [core topic]"
-- Exception: Pure search queries (see PATTERNS below) → use "SEARCH_SUMMARY_MODE"
-
-**PATTERNS**:
-1. Pure search: "find papers by Smith" → SEARCH_SUMMARY_MODE + extract filters
-2. Search + action: "find papers by Smith and explain" → action + extract filters
-3. Pure action: "explain machine learning" → action + empty filters
-
-**EXAMPLES**:
+## 6. Examples
 
 User: "What is Python?"
 Response: {{"search_rag": false, "embedding_texts": {{"rewrite": "", "hyde": ["", "", ""]}}, "llm_query": "Explain what Python is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 User: "{self.trigger_phrase} find papers by Smith"
-Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers", "hyde": ["Research papers contain peer-reviewed findings.", "Academic papers present systematic research.", "Papers document experimental results."]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Smith"}}}}
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers", "hyde": ["[Replace with Professor perspective answer about papers in 3-4 sentences]", "[Replace with Teacher perspective answer about papers in 3-4 sentences]", "[Replace with Student perspective answer about papers in 3-4 sentences]"]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Smith"}}}}
 
 User: "{self.trigger_phrase} papers by Smith from 2024"
-Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers Smith 2024", "hyde": ["Research papers by Smith from 2024.", "Smith's 2024 publications show recent work.", "2024 papers by Smith present new findings."]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Smith", "publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}}}
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers", "hyde": ["[Replace with Professor perspective answer about papers by Smith from 2024 in 3-4 sentences]", "[Replace with Teacher perspective answer about papers by Smith from 2024 in 3-4 sentences]", "[Replace with Student perspective answer about papers by Smith from 2024 in 3-4 sentences]"]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Smith", "publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}}}
 
 User: "{self.trigger_phrase} papers ONLY from 2024, not by Johnson"
-Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers 2024", "hyde": ["2024 papers show recent research.", "Current papers reflect latest findings.", "Recent papers demonstrate new methods."]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}, "negation_filters": {{"author": "Johnson"}}, "soft_filters": {{}}}}
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers", "hyde": ["[Replace with Expert perspective answer about 2024 papers (not by Johnson) in 3-4 sentences]", "[Replace with Researcher perspective answer about 2024 papers (not by Johnson) in 3-4 sentences]", "[Replace with Scholar perspective answer about 2024 papers (not by Johnson) in 3-4 sentences]"]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}, "negation_filters": {{"author": "Johnson"}}, "soft_filters": {{}}}}
 
 User: "{self.trigger_phrase} explain machine learning"
-Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "machine learning", "hyde": ["Machine learning uses algorithms to find patterns in data.", "ML teaches computers to learn from examples.", "Studying ML helps understand automated learning systems."]}}, "llm_query": "Based on the provided context, explain machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "machine learning", "hyde": ["[Replace with Professor perspective answer about machine learning in 3-4 sentences]", "[Replace with Expert perspective answer about machine learning in 3-4 sentences]", "[Replace with Educator perspective answer about machine learning in 3-4 sentences]"]}}, "llm_query": "Based on the provided context, explain machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 Always respond with valid JSON only."""
 
