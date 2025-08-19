@@ -618,8 +618,8 @@ def test_unified_system_prompt_contains_both_strategies():
     assert "embedding_texts" in prompt
     assert "rewrite" in prompt.lower()
     assert "hyde" in prompt.lower()
-    assert "hypothetical document" in prompt.lower()
-    assert "extract core topic keywords" in prompt.lower()
+    assert "knowledge-based answers" in prompt.lower()
+    assert "extract clean topic keywords" in prompt.lower()
 
 def test_hyde_strategy_hypothetical_document_generation():
     """Test HyDE strategy generates hypothetical documents."""
