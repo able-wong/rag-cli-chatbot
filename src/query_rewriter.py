@@ -66,7 +66,7 @@ Use natural language understanding to identify user intent and split accordingly
 **Splitting Examples:**
 - "find papers by Smith" → RAG: "papers by Smith" | LLM: "SEARCH_SUMMARY_MODE"
 - "locate research by Smith and explain findings" → RAG: "research by Smith" | LLM: "explain findings"  
-- "what is machine learning" → RAG: "machine learning" | LLM: "what is machine learning"
+- "{self.trigger_phrase} what is machine learning" → RAG: "machine learning" | LLM: "what is machine learning"
 
 ## 3. Filter Extraction
 
@@ -78,7 +78,6 @@ Extract filters from RAG search criteria only when "{self.trigger_phrase}" prese
 - **Soft filters**: DEFAULT for ALL mentions - boost relevance but don't exclude ("papers by Smith", "from 2024", "tagged Python")
 - **Hard filters**: Use when user expresses restrictive/exclusive intent (examples: "only", "just", "exclusively" and similar limiting language)
 - **Negation filters**: Use when user expresses exclusion/avoidance intent (examples: "not", "without", "except" and similar excluding language)
-- **Empty filters**: Pure questions without search intent
 
 **Date Format Conversion:**
 For publication_date filters, convert date mentions to start/end date range format:
