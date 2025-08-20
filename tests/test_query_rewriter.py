@@ -618,7 +618,7 @@ def test_unified_system_prompt_contains_both_strategies():
     assert "embedding_texts" in prompt
     assert "rewrite" in prompt.lower()
     assert "hyde" in prompt.lower()
-    assert "knowledge-based answers" in prompt.lower()
+    assert "knowledge-based content" in prompt.lower()
     assert "extract clean topic keywords" in prompt.lower()
 
 def test_hyde_strategy_hypothetical_document_generation():
@@ -1220,8 +1220,6 @@ def test_strict_hard_filter_keywords():
         assert result['search_rag'] is True
         assert result['hard_filters'] == expected_hard_filters
         assert result['negation_filters'] == {}
-        # Could have soft_filters for other terms
-        print(f"✓ Hard filter test passed: {query}")
 
 def test_negation_filter_keywords():
     """Test that negation keywords trigger negation_filters."""
@@ -1258,8 +1256,6 @@ def test_negation_filter_keywords():
         assert result['search_rag'] is True
         assert result['hard_filters'] == {}
         assert result['negation_filters'] == expected_negation_filters
-        # Could have soft_filters for other terms
-        print(f"✓ Negation filter test passed: {query}")
 
 def test_default_soft_filter_behavior():
     """Test that regular queries default to soft_filters."""
@@ -1296,7 +1292,6 @@ def test_default_soft_filter_behavior():
         assert result['hard_filters'] == {}
         assert result['negation_filters'] == {}
         assert result['soft_filters'] == expected_soft_filters
-        print(f"✓ Soft filter test passed: {query}")
 
 def test_user_example_query_classification():
     """Test the user's exact example query with correct filter classification."""
@@ -1328,7 +1323,6 @@ def test_user_example_query_classification():
     assert result['hard_filters'] == {"publication_date": {"gte": "2025-01-01", "lt": "2026-01-01"}}
     assert result['negation_filters'] == {"author": "John Wong"}
     assert result['soft_filters'] == {"tags": ["gemini"]}
-    print("✓ User example query classification test passed")
 
 def test_combined_filter_extraction():
     """Test queries with multiple filter types combined."""
@@ -1384,7 +1378,6 @@ def test_combined_filter_extraction():
         assert result['hard_filters'] == case["expected"]["hard_filters"]
         assert result['negation_filters'] == case["expected"]["negation_filters"]
         assert result['soft_filters'] == case["expected"]["soft_filters"]
-        print(f"✓ Combined filter test passed: {case['query'][:50]}...")
 
 def test_filter_validation_and_fallback():
     """Test that filter field validation works correctly."""
@@ -1437,7 +1430,6 @@ def test_filter_validation_and_fallback():
     assert result['hard_filters'] == {}
     assert result['negation_filters'] == {}
     assert result['soft_filters'] == {}
-    print("✓ Filter validation test passed")
 
 def test_fallback_includes_all_filter_types():
     """Test that fallback result includes all filter types."""
@@ -1460,7 +1452,6 @@ def test_fallback_includes_all_filter_types():
     assert result['hard_filters'] == {}
     assert result['negation_filters'] == {}
     assert result['soft_filters'] == {}
-    print("✓ Fallback filter types test passed")
 
 def test_edge_case_filter_combinations():
     """Test edge cases and unusual filter combinations."""
@@ -1516,8 +1507,6 @@ def test_edge_case_filter_combinations():
         
         if "expected_hard_filters" in case:
             assert result['hard_filters'] == case["expected_hard_filters"]
-        
-        print(f"✓ Edge case test passed: {case['query'][:30]}...")
 
 def test_non_rag_queries_have_empty_filters():
     """Test that non-RAG queries have empty filter fields."""
@@ -1552,8 +1541,6 @@ def test_non_rag_queries_have_empty_filters():
         assert result['hard_filters'] == {}
         assert result['negation_filters'] == {}
         assert result['soft_filters'] == {}
-        print(f"✓ Non-RAG query test passed: {query[:30]}...")
-
 
 def test_search_only_query_detection():
     """Test detection of search-only queries that should use SEARCH_SUMMARY_MODE."""
@@ -1589,7 +1576,6 @@ def test_search_only_query_detection():
         # QueryRewriter now converts SEARCH_SUMMARY_MODE to the full prompt
         assert "If no context documents are provided" in result['llm_query'], f"Should have search summary prompt for: {query}"
         assert "Document Summary" in result['llm_query'], f"Should have search summary sections for: {query}"
-        print(f"✓ Search-only detection test passed: {query}")
 
 
 def test_question_queries_not_search_only():
@@ -1625,7 +1611,7 @@ def test_question_queries_not_search_only():
         # QueryRewriter now returns full prompts, not SEARCH_SUMMARY_MODE
         assert "If no context documents are provided" not in result['llm_query'], f"Should NOT be search summary for: {query}"
         assert "based on the provided context" in result['llm_query'].lower(), f"Should use context reference for: {query}"
-        print(f"✓ Question query test passed: {query}")
+
 
 
 def test_build_final_llm_query_method():
@@ -1640,10 +1626,181 @@ def test_build_final_llm_query_method():
     assert "Document Summary" in search_summary_prompt
     assert "Key Topics" in search_summary_prompt
     assert "Question Suggestions" in search_summary_prompt
-    print("✓ SEARCH_SUMMARY_MODE conversion test passed")
     
     # Test regular prompt pass-through
     regular_prompt = "Based on the provided context, explain machine learning."
     result_prompt = rewriter._build_final_llm_query(regular_prompt)
     assert result_prompt == regular_prompt
-    print("✓ Regular prompt pass-through test passed")
+
+
+# Debug Mode Tests
+
+def test_query_rewriter_debug_error_creation():
+    """Test QueryRewriterDebugError exception class creation and attributes."""
+    from query_rewriter import QueryRewriterDebugError
+    
+    # Test with all parameters
+    error = QueryRewriterDebugError(
+        failure_type="validation_error",
+        message="Test error message",
+        raw_response='{"test": "response"}',
+        parsed_data={"parsed": "data"}
+    )
+    
+    assert error.failure_type == "validation_error"
+    assert str(error) == "Test error message"
+    assert error.raw_response == '{"test": "response"}'
+    assert error.parsed_data == {"parsed": "data"}
+    
+    # Test with minimal parameters
+    minimal_error = QueryRewriterDebugError(
+        failure_type="llm_error",
+        message="Minimal error"
+    )
+    
+    assert minimal_error.failure_type == "llm_error"
+    assert str(minimal_error) == "Minimal error"
+    assert minimal_error.raw_response is None
+    assert minimal_error.parsed_data is None
+    
+    # Test inheritance
+    assert isinstance(error, Exception)
+
+
+def test_transform_query_debug_mode_success():
+    """Test transform_query with debug mode enabled - successful transformation."""
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock successful JSON response
+    mock_response = {
+        'search_rag': True,
+        'embedding_texts': {
+            'rewrite': 'test query',
+            'hyde': ['response 1', 'response 2', 'response 3']
+        },
+        'llm_query': 'test instruction',
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {}
+    }
+    mock_llm.get_json_response.return_value = mock_response
+    
+    # Test with debug mode enabled - should work normally
+    result = rewriter.transform_query('@knowledgebase test query', rethrow_on_error=True)
+    
+    assert result['search_rag'] is True
+    assert result['embedding_texts']['rewrite'] == 'test query'
+    assert len(result['embedding_texts']['hyde']) == 3
+    assert result['source'] == 'llm'
+    
+    # Test with debug mode disabled (default) - should also work
+    result_normal = rewriter.transform_query('@knowledgebase test query', rethrow_on_error=False)
+    
+    assert result_normal['search_rag'] is True
+    assert result_normal['source'] == 'llm'
+
+
+def test_transform_query_debug_mode_llm_error():
+    """Test transform_query with debug mode enabled - LLM error."""
+    from query_rewriter import QueryRewriterDebugError
+    
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock LLM error with raw response
+    llm_error = ValueError("Invalid JSON response from LLM")
+    llm_error.raw_response = '{"invalid": json}'
+    llm_error.cleaned_response = '{"invalid": json}'
+    mock_llm.get_json_response.side_effect = llm_error
+    
+    # Test with debug mode enabled - should raise QueryRewriterDebugError
+    try:
+        rewriter.transform_query('@knowledgebase test query', rethrow_on_error=True)
+        assert False, "Should have raised QueryRewriterDebugError"
+    except QueryRewriterDebugError as error:
+        assert error.failure_type == "transform_error"
+        assert "Query transformation failed" in str(error)
+        assert error.raw_response == '{"invalid": json}'
+        assert error.parsed_data is not None
+        assert error.parsed_data["cleaned_response"] == '{"invalid": json}'
+    
+    # Test with debug mode disabled - should return fallback
+    result = rewriter.transform_query('@knowledgebase test query', rethrow_on_error=False)
+    
+    assert result['source'] == 'fallback'
+    assert result['search_rag'] is True
+
+
+def test_transform_query_debug_mode_validation_error():
+    """Test transform_query with debug mode enabled - validation error."""
+    from query_rewriter import QueryRewriterDebugError
+    
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock response missing required field
+    mock_response = {
+        'search_rag': True,
+        'embedding_texts': {
+            'rewrite': 'test query',
+            'hyde': ['response 1', 'response 2', 'response 3']
+        },
+        # Missing 'llm_query' field
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {}
+    }
+    mock_llm.get_json_response.return_value = mock_response
+    
+    # Test with debug mode enabled - should raise QueryRewriterDebugError
+    try:
+        rewriter.transform_query('@knowledgebase test query', rethrow_on_error=True)
+        assert False, "Should have raised QueryRewriterDebugError"
+    except QueryRewriterDebugError as error:
+        assert error.failure_type == "validation_error"
+        assert "Missing required field 'llm_query'" in str(error)
+        assert error.raw_response == str(mock_response)
+        assert error.parsed_data == mock_response
+    
+    # Test with debug mode disabled - should return fallback
+    result = rewriter.transform_query('@knowledgebase test query', rethrow_on_error=False)
+    
+    assert result['source'] == 'fallback'
+    assert result['search_rag'] is True
+
+
+def test_transform_query_debug_mode_empty_rewrite_validation():
+    """Test transform_query debug mode with empty rewrite validation error."""
+    from query_rewriter import QueryRewriterDebugError
+    
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock response with empty rewrite field
+    mock_response = {
+        'search_rag': True,
+        'embedding_texts': {
+            'rewrite': '',  # Empty rewrite
+            'hyde': ['response 1', 'response 2', 'response 3']
+        },
+        'llm_query': 'test instruction',
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {}
+    }
+    mock_llm.get_json_response.return_value = mock_response
+    
+    # Test with debug mode enabled - should raise QueryRewriterDebugError
+    try:
+        rewriter.transform_query('@knowledgebase test query', rethrow_on_error=True)
+        assert False, "Should have raised QueryRewriterDebugError"
+    except QueryRewriterDebugError as error:
+        assert error.failure_type == "validation_error"
+        assert "embedding_texts.rewrite is required for RAG queries" in str(error)
+        assert error.raw_response == str(mock_response)
+        assert error.parsed_data == mock_response

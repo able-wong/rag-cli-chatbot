@@ -204,8 +204,8 @@ class LLMClient:
             if not raw_response or not raw_response.strip():
                 raise ValueError("LLM returned empty response")
             
-            # Strip markdown code block wrappers if present
-            cleaned_response = self._strip_markdown_json_wrapper(raw_response.strip())
+            # Strip thinking blocks and markdown wrappers if present
+            cleaned_response = self._extract_json_from_response(raw_response.strip())
             
             # Parse JSON
             try:
@@ -215,11 +215,56 @@ class LLMClient:
                 
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON response. Raw: '{raw_response[:200]}...', Cleaned: '{cleaned_response[:200]}...', Error: {e}")
-                raise ValueError(f"Invalid JSON response from LLM: {e}")
+                # Create enhanced error with raw response for debugging
+                json_error = ValueError(f"Invalid JSON response from LLM: {e}")
+                json_error.raw_response = raw_response
+                json_error.cleaned_response = cleaned_response
+                raise json_error
                 
         except Exception as e:
             logger.error(f"Failed to get JSON response from LLM: {e}")
             raise
+    
+    def _extract_json_from_response(self, text: str) -> str:
+        """
+        Extract JSON from LLM response, handling thinking blocks and markdown wrappers.
+        
+        This method handles:
+        1. Thinking models with <think>...</think> blocks
+        2. Markdown code block wrappers (```json ... ```)
+        3. Raw JSON without wrappers
+        4. Multiple extraction strategies for robustness
+        
+        Args:
+            text: Raw text from LLM that may contain thinking blocks and/or markdown
+            
+        Returns:
+            Cleaned JSON text ready for parsing
+        """
+        # First, remove thinking blocks if present
+        text_without_thinking = self._strip_thinking_blocks(text)
+        
+        # Then try to extract JSON from the remaining content
+        return self._strip_markdown_json_wrapper(text_without_thinking)
+    
+    def _strip_thinking_blocks(self, text: str) -> str:
+        """
+        Remove <think>...</think> blocks from text, preserving other content.
+        
+        Args:
+            text: Text that may contain thinking blocks
+            
+        Returns:
+            Text with thinking blocks removed
+        """
+        # Remove thinking blocks (case insensitive, multiline)
+        pattern = r'<think>.*?</think>'
+        cleaned = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
+        
+        # Clean up extra whitespace
+        cleaned = re.sub(r'\n\s*\n', '\n', cleaned.strip())
+        
+        return cleaned
     
     def _strip_markdown_json_wrapper(self, text: str) -> str:
         """

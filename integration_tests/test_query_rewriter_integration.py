@@ -215,3 +215,76 @@ class TestQueryRewriterIntegration:
         
         print(f"✅ Pattern 2 test passed - Query: {test_query}")
         print(f"✅ Clean LLM query: {llm_query}")
+
+    def test_filter_information_removal_from_embeddings(self, query_rewriter):
+        """
+        Test that filter information (author, dates) is properly removed from 
+        rewrite keywords and HyDE content, while being extracted to filters.
+        
+        Validates that:
+        1. rewrite field contains only core topic keywords 
+        2. HyDE content focuses on topic without filter information
+        3. Filter information is properly extracted to soft_filters
+        """
+        test_query = "@knowledgebase vibe coding articles by John Wong from 2025"
+        
+        result = query_rewriter.transform_query(test_query)
+        
+        # Validate basic structure
+        assert isinstance(result, dict), "Result should be a dictionary"
+        assert result['search_rag'] is True, "Should detect RAG trigger"
+        assert 'embedding_texts' in result, "Should contain embedding_texts"
+        assert 'soft_filters' in result, "Should contain soft_filters"
+        
+        # Test 1: rewrite should only contain core topic keywords
+        rewrite_text = result['embedding_texts']['rewrite']
+        assert isinstance(rewrite_text, str), "Rewrite should be a string"
+        
+        # Should contain topic keywords
+        assert 'vibe coding' in rewrite_text.lower(), "Rewrite should contain core topic 'vibe coding'"
+        assert 'articles' in rewrite_text.lower(), "Rewrite should contain content type 'articles'"
+        
+        # Should NOT contain filter information
+        assert 'john wong' not in rewrite_text.lower(), "Rewrite should not contain author name"
+        assert '2025' not in rewrite_text, "Rewrite should not contain publication date"
+        assert 'john' not in rewrite_text.lower(), "Rewrite should not contain author first name"
+        assert 'wong' not in rewrite_text.lower(), "Rewrite should not contain author last name"
+        
+        # Test 2: HyDE should focus on topic only, not include filter information
+        hyde_texts = result['embedding_texts']['hyde']
+        assert isinstance(hyde_texts, list), "HyDE should be a list"
+        assert len(hyde_texts) >= 1, "Should have at least one HyDE text"
+        
+        # Check each HyDE text
+        for i, hyde_text in enumerate(hyde_texts):
+            assert isinstance(hyde_text, str), f"HyDE text {i} should be a string"
+            assert len(hyde_text.strip()) > 0, f"HyDE text {i} should not be empty"
+            
+            # Should focus on topic
+            assert 'vibe coding' in hyde_text.lower() or 'coding' in hyde_text.lower(), f"HyDE text {i} should discuss the topic"
+            
+            # Should NOT contain specific filter information
+            assert 'john wong' not in hyde_text.lower(), f"HyDE text {i} should not mention specific author"
+            assert '2025' not in hyde_text, f"HyDE text {i} should not mention specific year"
+            
+            # Should not be placeholder text
+            assert not hyde_text.startswith('[Replace with'), f"HyDE text {i} should not be placeholder text"
+        
+        # Test 3: Filter information should be properly extracted
+        soft_filters = result['soft_filters']
+        assert 'author' in soft_filters, "Should extract author to soft_filters"
+        assert soft_filters['author'] == 'John Wong', "Should correctly extract author name"
+        assert 'publication_date' in soft_filters, "Should extract publication date to soft_filters"
+        
+        pub_date = soft_filters['publication_date']
+        assert isinstance(pub_date, dict), "Publication date should be a range object"
+        assert 'gte' in pub_date, "Should have gte (greater than or equal) date"
+        assert 'lt' in pub_date, "Should have lt (less than) date"
+        assert '2025' in pub_date['gte'], "Should extract 2025 as start year"
+        assert '2026' in pub_date['lt'], "Should set 2026 as end year"
+        
+        print(f"✅ Filter removal test passed - Query: {test_query}")
+        print(f"  Rewrite (clean): '{rewrite_text}'")
+        print(f"  HyDE texts: {len(hyde_texts)} generated")
+        print(f"  Soft filters: {soft_filters}")
+        print("  All filter information properly separated from embeddings")
