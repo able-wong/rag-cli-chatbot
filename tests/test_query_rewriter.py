@@ -618,7 +618,7 @@ def test_unified_system_prompt_contains_both_strategies():
     assert "embedding_texts" in prompt
     assert "rewrite" in prompt.lower()
     assert "hyde" in prompt.lower()
-    assert "knowledge-based answers" in prompt.lower()
+    assert "knowledge-based content" in prompt.lower()
     assert "extract clean topic keywords" in prompt.lower()
 
 def test_hyde_strategy_hypothetical_document_generation():
@@ -1646,4 +1646,177 @@ def test_build_final_llm_query_method():
     regular_prompt = "Based on the provided context, explain machine learning."
     result_prompt = rewriter._build_final_llm_query(regular_prompt)
     assert result_prompt == regular_prompt
+
+
+# Debug Mode Tests
+
+def test_query_rewriter_debug_error_creation():
+    """Test QueryRewriterDebugError exception class creation and attributes."""
+    from query_rewriter import QueryRewriterDebugError
+    
+    # Test with all parameters
+    error = QueryRewriterDebugError(
+        failure_type="validation_error",
+        message="Test error message",
+        raw_response='{"test": "response"}',
+        parsed_data={"parsed": "data"}
+    )
+    
+    assert error.failure_type == "validation_error"
+    assert str(error) == "Test error message"
+    assert error.raw_response == '{"test": "response"}'
+    assert error.parsed_data == {"parsed": "data"}
+    
+    # Test with minimal parameters
+    minimal_error = QueryRewriterDebugError(
+        failure_type="llm_error",
+        message="Minimal error"
+    )
+    
+    assert minimal_error.failure_type == "llm_error"
+    assert str(minimal_error) == "Minimal error"
+    assert minimal_error.raw_response is None
+    assert minimal_error.parsed_data is None
+    
+    # Test inheritance
+    assert isinstance(error, Exception)
+
+
+def test_transform_query_debug_mode_success():
+    """Test transform_query with debug mode enabled - successful transformation."""
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock successful JSON response
+    mock_response = {
+        'search_rag': True,
+        'embedding_texts': {
+            'rewrite': 'test query',
+            'hyde': ['response 1', 'response 2', 'response 3']
+        },
+        'llm_query': 'test instruction',
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {}
+    }
+    mock_llm.get_json_response.return_value = mock_response
+    
+    # Test with debug mode enabled - should work normally
+    result = rewriter.transform_query('@knowledgebase test query', rethrow_on_error=True)
+    
+    assert result['search_rag'] is True
+    assert result['embedding_texts']['rewrite'] == 'test query'
+    assert len(result['embedding_texts']['hyde']) == 3
+    assert result['source'] == 'llm'
+    
+    # Test with debug mode disabled (default) - should also work
+    result_normal = rewriter.transform_query('@knowledgebase test query', rethrow_on_error=False)
+    
+    assert result_normal['search_rag'] is True
+    assert result_normal['source'] == 'llm'
+
+
+def test_transform_query_debug_mode_llm_error():
+    """Test transform_query with debug mode enabled - LLM error."""
+    from query_rewriter import QueryRewriterDebugError
+    
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock LLM error with raw response
+    llm_error = ValueError("Invalid JSON response from LLM")
+    llm_error.raw_response = '{"invalid": json}'
+    llm_error.cleaned_response = '{"invalid": json}'
+    mock_llm.get_json_response.side_effect = llm_error
+    
+    # Test with debug mode enabled - should raise QueryRewriterDebugError
+    try:
+        rewriter.transform_query('@knowledgebase test query', rethrow_on_error=True)
+        assert False, "Should have raised QueryRewriterDebugError"
+    except QueryRewriterDebugError as error:
+        assert error.failure_type == "transform_error"
+        assert "Query transformation failed" in str(error)
+        assert error.raw_response == '{"invalid": json}'
+        assert error.parsed_data is not None
+        assert error.parsed_data["cleaned_response"] == '{"invalid": json}'
+    
+    # Test with debug mode disabled - should return fallback
+    result = rewriter.transform_query('@knowledgebase test query', rethrow_on_error=False)
+    
+    assert result['source'] == 'fallback'
+    assert result['search_rag'] is True
+
+
+def test_transform_query_debug_mode_validation_error():
+    """Test transform_query with debug mode enabled - validation error."""
+    from query_rewriter import QueryRewriterDebugError
+    
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock response missing required field
+    mock_response = {
+        'search_rag': True,
+        'embedding_texts': {
+            'rewrite': 'test query',
+            'hyde': ['response 1', 'response 2', 'response 3']
+        },
+        # Missing 'llm_query' field
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {}
+    }
+    mock_llm.get_json_response.return_value = mock_response
+    
+    # Test with debug mode enabled - should raise QueryRewriterDebugError
+    try:
+        rewriter.transform_query('@knowledgebase test query', rethrow_on_error=True)
+        assert False, "Should have raised QueryRewriterDebugError"
+    except QueryRewriterDebugError as error:
+        assert error.failure_type == "validation_error"
+        assert "Missing required field 'llm_query'" in str(error)
+        assert error.raw_response == str(mock_response)
+        assert error.parsed_data == mock_response
+    
+    # Test with debug mode disabled - should return fallback
+    result = rewriter.transform_query('@knowledgebase test query', rethrow_on_error=False)
+    
+    assert result['source'] == 'fallback'
+    assert result['search_rag'] is True
+
+
+def test_transform_query_debug_mode_empty_rewrite_validation():
+    """Test transform_query debug mode with empty rewrite validation error."""
+    from query_rewriter import QueryRewriterDebugError
+    
+    mock_llm = create_mock_llm_client()
+    config = {'trigger_phrase': '@knowledgebase'}
+    rewriter = QueryRewriter(mock_llm, config)
+    
+    # Mock response with empty rewrite field
+    mock_response = {
+        'search_rag': True,
+        'embedding_texts': {
+            'rewrite': '',  # Empty rewrite
+            'hyde': ['response 1', 'response 2', 'response 3']
+        },
+        'llm_query': 'test instruction',
+        'hard_filters': {},
+        'negation_filters': {},
+        'soft_filters': {}
+    }
+    mock_llm.get_json_response.return_value = mock_response
+    
+    # Test with debug mode enabled - should raise QueryRewriterDebugError
+    try:
+        rewriter.transform_query('@knowledgebase test query', rethrow_on_error=True)
+        assert False, "Should have raised QueryRewriterDebugError"
+    except QueryRewriterDebugError as error:
+        assert error.failure_type == "validation_error"
+        assert "embedding_texts.rewrite is required for RAG queries" in str(error)
+        assert error.raw_response == str(mock_response)
+        assert error.parsed_data == mock_response
     print("✓ Regular prompt pass-through test passed")

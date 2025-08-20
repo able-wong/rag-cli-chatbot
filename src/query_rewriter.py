@@ -4,6 +4,14 @@ from llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
+class QueryRewriterDebugError(Exception):
+    """Exception raised in debug mode with detailed LLM response information."""
+    def __init__(self, failure_type: str, message: str, raw_response: str = None, parsed_data: Dict = None):
+        self.failure_type = failure_type
+        self.raw_response = raw_response
+        self.parsed_data = parsed_data
+        super().__init__(message)
+
 class QueryRewriter:
     """
     Service for transforming user queries using LLM to optimize RAG retrieval.
@@ -19,10 +27,11 @@ class QueryRewriter:
         
         # Query rewriter specific settings
         self.temperature = config.get('temperature', 0.1)  # Low temp for consistent JSON
-        self.max_tokens = config.get('max_tokens', 512)    # Shorter responses for structured output
+        self.max_tokens = config.get('max_tokens', 4096)   # Large buffer for thinking models and complex JSON responses
         
         self.system_prompt = self._build_system_prompt()
         logger.info(f"QueryRewriter initialized with strategy: {self.retrieval_strategy}")
+    
     
     def _build_system_prompt(self) -> str:
         """Build the unified system prompt for query transformation."""
@@ -31,15 +40,14 @@ class QueryRewriter:
 
     def _build_unified_system_prompt(self) -> str:
         """Build the unified system prompt for query transformation that returns both rewrite and hyde formats."""
-        return f"""# Query Transformation Instructions
-
+        return f"""You are an advanced query rewriter designed to transform user queries into a JSON response for retrieval-augmented generation (RAG) systems. Your task is to analyze user prompts, extract relevant information, and generate structured outputs that can be used for both RAG search and LLM generation.
+        
 ## 1. Overview
 
 IF user prompt contains "{self.trigger_phrase}":
-- Transform user queries into structured format for retrieval
-- Split user prompt into RAG search criteria and LLM instructions
-- Extract filters from RAG search criteria  
-- Generate both keywords and knowledge-based answers for the RAG search criteria only
+- STEP 1: Split user prompt into RAG search criteria and LLM instructions
+- STEP 2: Extract filters from RAG search criteria (author, tags, publication_date)
+- STEP 3: Generate embedding texts (rewrite keywords and hyde answers) from remaining content
 
 IF user prompt does NOT contain "{self.trigger_phrase}":
 - Set "search_rag": false
@@ -47,7 +55,23 @@ IF user prompt does NOT contain "{self.trigger_phrase}":
 - Set embedding_texts to empty values 
 - Transform user query into clean LLM instruction format
 
-## 2. Prompt Splitting Rules
+**PROCESSING ORDER**: Always complete filter extraction BEFORE generating embedding texts to avoid conflicts.
+
+## 2. Response Format
+
+**JSON Structure (JSON only):**
+- "search_rag": boolean - True if query contains "{self.trigger_phrase}" (see Section 3 for trigger detection)
+- "embedding_texts": object - Contains following fields:
+  - "rewrite": string - see section 5.1 for generation details
+  - "hyde": array - see section 5.2 for generation details
+- "llm_query": string - LLM instruction (see Section 5.3 for extraction rules)
+- "hard_filters": object - Must-match filters (see Section 4 for filter extraction)
+- "negation_filters": object - Must-NOT-match filters (see Section 4 for filter extraction)
+- "soft_filters": object - Boost-if-match filters (see Section 4 for filter extraction)
+
+(Detailed instructions for each field are provided in the sections referenced above)
+
+## 3. Prompt Splitting Rules
 
 Use natural language understanding to identify user intent and split accordingly into one of 3 patterns:
 
@@ -68,16 +92,21 @@ Use natural language understanding to identify user intent and split accordingly
 - "locate research by Smith and explain findings" → RAG: "research by Smith" | LLM: "explain findings"  
 - "{self.trigger_phrase} what is machine learning" → RAG: "machine learning" | LLM: "what is machine learning"
 
-## 3. Filter Extraction
+## 4. Filter Extraction
 
 Extract filters from RAG search criteria only when "{self.trigger_phrase}" present in user prompt.
 
 **Supported filterable fields:** author, tags, publication_date
 
 **Filter Types:**
-- **Soft filters**: DEFAULT for ALL mentions - boost relevance but don't exclude ("papers by Smith", "from 2024", "tagged Python")
-- **Hard filters**: Use when user expresses restrictive/exclusive intent (examples: "only", "just", "exclusively" and similar limiting language)
+- **Soft filters**: DEFAULT for ALL mentions - boost relevance but don't exclude ("papers by Smith", "from 2024", "tagged Python", "about python")
+- **Hard filters**: Use when user expresses restrictive/exclusive intent (examples: "only", "just", "exclusively" and similar limiting language). KEY: Analyze what the restrictive word directly modifies - if "only from Smith, published in 2025", the word "only" modifies "from Smith" but not "published in 2025".
 - **Negation filters**: Use when user expresses exclusion/avoidance intent (examples: "not", "without", "except" and similar excluding language)
+
+**Tag Detection:**
+- Extract topic words as tags: "papers about python" → tags=["python"]
+- Extract explicit tags: "papers with tag python" → tags=["python"] 
+- Multiple topics: "articles about python and machine learning" → tags=["python", "machine learning"]
 
 **Date Format Conversion:**
 For publication_date filters, convert date mentions to start/end date range format:
@@ -87,62 +116,65 @@ For publication_date filters, convert date mentions to start/end date range form
 - "in March 2024" → {{"gte": "2024-03-01", "lt": "2024-04-01"}}
 - Use best guess for ambiguous dates and always provide gte/lt format when possible
 
+**Filter Scope Examples:**
+- "articles by Smith from 2024" → author=soft, date=soft (both descriptive)
+- "papers about python by Smith" → tags=soft, author=soft (both descriptive) 
+- "papers about python and ML ONLY by Smith" → tags=soft, author=hard (restrictive applies to author only)
+- "papers ONLY by Smith, from 2024" → author=hard, date=soft (restrictive applies to author, date is descriptive)
+- "research exclusively from 2024 by Smith" → date=hard, author=soft (restrictive applies to date, author is descriptive)
+
 KEY RULE: Use natural language understanding to detect intent. Everything goes to soft_filters unless clearly expressing restrictive or exclusion intent.
 
-## 4. Content Generation
+## 5. Content Generation
 
-**embedding_texts Generation:**
-- "rewrite": Extract clean topic keywords from RAG search criteria, removing:
+### 5.1 embedding_texts.rewrite text Generation
+- "rewrite": Extract clean topic keywords from RAG search criteria. REQUIRED - NEVER leave empty. Remove:
   * Action words: "find", "search", "get", "show", "locate", "retrieve"
   * Stop words: "the", "and", "of", "in", "from", "by", "about"  
-  * Filter information: remove all filterable fields (author, tags, publication_date)
-  * Keep only: core topic nouns and relevant descriptive terms
-- "hyde": Generate 3 short answers about the TOPIC ONLY from the RAG search criteria (3-4 sentences each) from different expert perspectives. Do NOT include specific author names, dates, or other filter information in the content - focus only on the core topic. Choose appropriate personas based on the topic (examples: Professor/Teacher/Student for science, Director/Manager/Assistant for business, Expert/Educator/Learner for other topics). CRITICAL: Do NOT copy the placeholder text shown in examples - generate your own actual knowledge-based content instead.
+  * Author names and dates (but KEEP topic words even if they were extracted as tags)
+  * If removal results in empty string, use the original RAG search criteria as fallback
+  * Example: "papers about python by Smith from 2025" → "papers python" (keep "python" even though it's also a tag)
 
-**LLM Instruction Extraction:**
+### 5.2 embedding_texts.hyde array Generation
+- "hyde": Generate 3 DISTINCT answers about the topics from the "rewrite" string from section 5.1 (3-4 sentences each), each from a DIFFERENT expert perspective/persona. Choose appropriate personas based on the topic (examples: Professor/Teacher/Student for science, Director/Manager/Assistant for business, Expert/Educator/Learner for other topics). ALWAYS provide your best answer even if unsure - use your knowledge to generate helpful content.
+
+### 5.3 LLM Instruction Extraction
 - For Document Discovery Intent: Use placeholder "SEARCH_SUMMARY_MODE" (caller will convert to document summary instructions)
 - For Search + Analysis Intent: Extract the analytical action and format as "Based on the provided context, [action]"
 - For Direct Question Intent: Format as "Based on the provided context, [question]"
 - Remove trigger phrase ("{self.trigger_phrase}") from all instructions
 - Remove filter clauses from instructions
 
-## 5. Response Format
-
-**JSON Structure (JSON only):**
-- "search_rag": boolean - True if query contains "{self.trigger_phrase}"
-- "embedding_texts": {{"rewrite": "keywords", "hyde": ["doc1", "doc2", "doc3"]}}
-- "llm_query": string - LLM instruction
-- "hard_filters": object - Must-match filters
-- "negation_filters": object - Must-NOT-match filters
-- "soft_filters": object - Boost-if-match filters
-
 ## 6. Examples
 
-IMPORTANT: The following examples show placeholder text in brackets like "[Replace with...]" - these are FORMAT EXAMPLES ONLY. You must generate actual knowledge-based content, NOT copy the placeholder text.
+IMPORTANT: The following examples show proper JSON structure with real knowledge-based content. Generate similar high-quality content for your responses. Your hyde entries should be complete, informative text without any placeholder markers or brackets.
 
 User: "What is Python?"
 Response: {{"search_rag": false, "embedding_texts": {{"rewrite": "", "hyde": ["", "", ""]}}, "llm_query": "Explain what Python is.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
 User: "{self.trigger_phrase} find papers by Smith"
-Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers", "hyde": ["[Replace with Professor perspective answer about papers in 3-4 sentences]", "[Replace with Teacher perspective answer about papers in 3-4 sentences]", "[Replace with Student perspective answer about papers in 3-4 sentences]"]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Smith"}}}}
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers", "hyde": ["Research papers are scholarly documents that present original findings and contribute to academic knowledge. They undergo peer review to ensure quality and provide evidence-based insights for the academic community.", "Academic publications serve as the foundation for scientific discourse and knowledge sharing. They document experimental procedures, theoretical frameworks, and help advance understanding in their respective fields.", "Scientific documents provide evidence-based insights through rigorous research methodologies. They enable knowledge transfer between researchers and facilitate reproducibility of research results."]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Smith"}}}}
 
-User: "{self.trigger_phrase} papers by Smith from 2024"
-Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers", "hyde": ["[Replace with Professor perspective answer about papers by Smith from 2024 in 3-4 sentences]", "[Replace with Teacher perspective answer about papers by Smith from 2024 in 3-4 sentences]", "[Replace with Student perspective answer about papers by Smith from 2024 in 3-4 sentences]"]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"author": "Smith", "publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}}}
+User: "{self.trigger_phrase} papers about python by Smith from 2024"
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers python", "hyde": ["Research papers about Python programming cover diverse topics from basic syntax to advanced frameworks. They provide comprehensive insights into Python's versatility across web development, data science, and automation, making it accessible for both beginners and experienced developers.", "Academic publications on Python demonstrate its effectiveness in solving complex computational problems. These documents showcase Python's extensive library ecosystem and its role in machine learning, artificial intelligence, and scientific computing applications.", "Scientific literature about Python programming illustrates its practical applications across various industries. These papers document best practices, performance optimizations, and innovative solutions that leverage Python's readable syntax and powerful capabilities."]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{"tags": ["python"], "author": "Smith", "publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}}}
 
 User: "{self.trigger_phrase} papers ONLY from 2024, not by Johnson"
-Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers", "hyde": ["[Replace with Expert perspective answer about 2024 papers (not by Johnson) in 3-4 sentences]", "[Replace with Researcher perspective answer about 2024 papers (not by Johnson) in 3-4 sentences]", "[Replace with Scholar perspective answer about 2024 papers (not by Johnson) in 3-4 sentences]"]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}, "negation_filters": {{"author": "Johnson"}}, "soft_filters": {{}}}}
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "papers", "hyde": ["Contemporary research papers reflect current trends and innovative approaches to complex scientific problems. They incorporate advanced technologies and interdisciplinary perspectives in their methodologies.", "Recent academic publications demonstrate the evolving landscape of scientific inquiry, providing insights into modern research practices and emerging theoretical frameworks that shape future research directions.", "Current research documents present timely findings that address contemporary challenges and opportunities, helping to shape the trajectory of academic research and scientific advancement."]}}, "llm_query": "SEARCH_SUMMARY_MODE", "hard_filters": {{"publication_date": {{"gte": "2024-01-01", "lt": "2025-01-01"}}}}, "negation_filters": {{"author": "Johnson"}}, "soft_filters": {{}}}}
 
 User: "{self.trigger_phrase} explain machine learning"
-Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "machine learning", "hyde": ["[Replace with Professor perspective answer about machine learning in 3-4 sentences]", "[Replace with Expert perspective answer about machine learning in 3-4 sentences]", "[Replace with Educator perspective answer about machine learning in 3-4 sentences]"]}}, "llm_query": "Based on the provided context, explain machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
+Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "machine learning", "hyde": ["As a computer science professor, I can tell you that machine learning represents a fundamental shift from traditional programming paradigms. Instead of explicitly coding every rule, we design algorithms that can learn patterns from data and improve their performance over time through statistical optimization.", "From a business perspective, machine learning is a powerful tool for gaining competitive advantage and driving innovation. Companies use ML to personalize customer experiences, optimize operations, and make data-driven decisions that directly impact revenue and efficiency.", "As a student learning about AI, I find machine learning fascinating because it mimics how humans learn from experience. The algorithms start with basic parameters and gradually become more accurate as they process more examples, much like how we improve at tasks through practice."]}}, "llm_query": "Based on the provided context, explain machine learning.", "hard_filters": {{}}, "negation_filters": {{}}, "soft_filters": {{}}}}
 
-Always respond with valid JSON only."""
+**CRITICAL INSTRUCTIONS:**
+- For "hyde" array: Generate ONLY your own knowledge-based content. Do NOT include placeholder text, brackets, or reference markers.
+- Response format: Always respond with ONLY valid JSON. Do NOT add explanatory text, notes, or content after the JSON."""
 
-    def transform_query(self, user_query: str) -> Dict[str, Any]:
+    def transform_query(self, user_query: str, rethrow_on_error: bool = False) -> Dict[str, Any]:
         """
         Transform a user query into structured format for RAG processing.
         
         Args:
             user_query: The original user query
+            rethrow_on_error: If True, raise exceptions instead of returning fallback result
             
         Returns:
             Dict containing:
@@ -166,7 +198,7 @@ Always respond with valid JSON only."""
             )
             
             # Validate and return result
-            validated_result = self._validate_result(result, user_query)
+            validated_result = self._validate_result(result, user_query, rethrow_on_error)
             
             # Convert structured llm_query to final, ready-to-use prompt
             validated_result['llm_query'] = self._build_final_llm_query(validated_result['llm_query'])
@@ -179,8 +211,27 @@ Always respond with valid JSON only."""
             logger.info(f"Query transformed successfully. RAG search: {validated_result['search_rag']}")
             return validated_result
             
+        except QueryRewriterDebugError:
+            # Re-raise QueryRewriterDebugError unchanged (validation and other debug errors)
+            raise
         except Exception as e:
             logger.error(f"Query transformation failed: {e}")
+            
+            # If rethrow_on_error is True, raise the exception instead of fallback
+            if rethrow_on_error:
+                # Extract raw response from exception if available
+                raw_response = getattr(e, 'raw_response', str(e))
+                cleaned_response = getattr(e, 'cleaned_response', None)
+                
+                # Create enhanced error with debugging information
+                enhanced_error = QueryRewriterDebugError(
+                    failure_type="transform_error",
+                    message=f"Query transformation failed: {e}",
+                    raw_response=raw_response,
+                    parsed_data={"cleaned_response": cleaned_response} if cleaned_response else None
+                )
+                raise enhanced_error from e
+            
             return self._create_fallback_result(user_query)
     
     def _build_final_llm_query(self, llm_prompt: str) -> str:
@@ -197,13 +248,14 @@ Format your response clearly with the sections above."""
         else:
             return llm_prompt  # Pass through regular prompts unchanged
     
-    def _validate_result(self, result: Dict[str, Any], original_query: str) -> Dict[str, Any]:
+    def _validate_result(self, result: Dict[str, Any], original_query: str, rethrow_on_error: bool = False) -> Dict[str, Any]:
         """
         Validate and sanitize the transformation result.
         
         Args:
             result: Parsed JSON result from LLM
             original_query: Original user query for fallback
+            rethrow_on_error: If True, raise exceptions instead of returning fallback
             
         Returns:
             Validated result dictionary
@@ -213,11 +265,25 @@ Format your response clearly with the sections above."""
         for field in required_fields:
             if field not in result:
                 logger.warning(f"Missing field '{field}' in transformation result")
+                if rethrow_on_error:
+                    raise QueryRewriterDebugError(
+                        failure_type="validation_error",
+                        message=f"Missing required field '{field}' in LLM response",
+                        raw_response=str(result),
+                        parsed_data=result
+                    )
                 return self._create_fallback_result(original_query)
         
         # Check for new embedding_texts structure
         if 'embedding_texts' not in result:
             logger.warning("Missing 'embedding_texts' field in transformation result")
+            if rethrow_on_error:
+                raise QueryRewriterDebugError(
+                    failure_type="validation_error",
+                    message="Missing 'embedding_texts' field in LLM response",
+                    raw_response=str(result),
+                    parsed_data=result
+                )
             return self._create_fallback_result(original_query)
         
         # Ensure all filter fields exist
@@ -242,16 +308,37 @@ Format your response clearly with the sections above."""
             embedding_texts = result.get('embedding_texts', {})
             if not isinstance(embedding_texts, dict):
                 logger.warning("embedding_texts must be a dictionary")
+                if rethrow_on_error:
+                    raise QueryRewriterDebugError(
+                        failure_type="validation_error",
+                        message="embedding_texts field must be a dictionary",
+                        raw_response=str(result),
+                        parsed_data=result
+                    )
                 return self._create_fallback_result(original_query)
             
             # Validate rewrite text
             if 'rewrite' not in embedding_texts or not isinstance(embedding_texts['rewrite'], str) or not embedding_texts['rewrite'].strip():
                 logger.warning("embedding_texts.rewrite is required for RAG queries")
+                if rethrow_on_error:
+                    raise QueryRewriterDebugError(
+                        failure_type="validation_error",
+                        message="embedding_texts.rewrite is required for RAG queries and must be non-empty string",
+                        raw_response=str(result),
+                        parsed_data=result
+                    )
                 return self._create_fallback_result(original_query)
             
             # Validate and clean hyde texts array
             if 'hyde' not in embedding_texts or not isinstance(embedding_texts['hyde'], list):
                 logger.warning("embedding_texts.hyde must be an array")
+                if rethrow_on_error:
+                    raise QueryRewriterDebugError(
+                        failure_type="validation_error",
+                        message="embedding_texts.hyde must be an array",
+                        raw_response=str(result),
+                        parsed_data=result
+                    )
                 return self._create_fallback_result(original_query)
             
             # Filter out empty/invalid hyde texts and keep only valid ones
@@ -265,6 +352,13 @@ Format your response clearly with the sections above."""
             # Require at least one valid hyde text for RAG queries
             if len(valid_hyde_texts) == 0:
                 logger.warning("No valid hyde texts generated, falling back")
+                if rethrow_on_error:
+                    raise QueryRewriterDebugError(
+                        failure_type="validation_error",
+                        message="No valid hyde texts generated - all entries were empty or invalid",
+                        raw_response=str(result),
+                        parsed_data=result
+                    )
                 return self._create_fallback_result(original_query)
             
             # Update with cleaned hyde texts
@@ -274,6 +368,13 @@ Format your response clearly with the sections above."""
         # Validate llm_query is not empty
         if not isinstance(result['llm_query'], str) or not result['llm_query'].strip():
             logger.warning("llm_query field is empty or invalid")
+            if rethrow_on_error:
+                raise QueryRewriterDebugError(
+                    failure_type="validation_error",
+                    message="llm_query field is empty or invalid",
+                    raw_response=str(result),
+                    parsed_data=result
+                )
             return self._create_fallback_result(original_query)
         
         # Validate all filter fields are dictionaries

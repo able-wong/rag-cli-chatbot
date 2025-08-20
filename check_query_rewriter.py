@@ -3,7 +3,7 @@ import json
 sys.path.insert(0, 'src')
 from config_manager import ConfigManager
 from llm_client import LLMClient  
-from query_rewriter import QueryRewriter
+from query_rewriter import QueryRewriter, QueryRewriterDebugError
 
 def main():
     if len(sys.argv) != 2:
@@ -54,9 +54,28 @@ def main():
     print(f"Strategy: {strategy_name}")
     print("=" * 60)
     
-    result = query_rewriter.transform_query(query)
-    
-    print(json.dumps(result, indent=2))
+    try:
+        result = query_rewriter.transform_query(query, rethrow_on_error=True)
+        print(json.dumps(result, indent=2))
+        
+    except QueryRewriterDebugError as e:
+        print("❌ Query transformation failed with debug information:")
+        print(f"Failure type: {e.failure_type}")
+        print(f"Error message: {e}")
+        print()
+        print("Raw LLM response:")
+        print("-" * 40)
+        print(e.raw_response)
+        print("-" * 40)
+        if e.parsed_data and e.parsed_data.get('cleaned_response'):
+            print()
+            print("Cleaned response (after markdown stripping):")
+            print("-" * 40)
+            print(e.parsed_data['cleaned_response'])
+            print("-" * 40)
+        
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
 
 if __name__ == "__main__":
     main()
