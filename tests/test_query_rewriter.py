@@ -1220,8 +1220,6 @@ def test_strict_hard_filter_keywords():
         assert result['search_rag'] is True
         assert result['hard_filters'] == expected_hard_filters
         assert result['negation_filters'] == {}
-        # Could have soft_filters for other terms
-        print(f"✓ Hard filter test passed: {query}")
 
 def test_negation_filter_keywords():
     """Test that negation keywords trigger negation_filters."""
@@ -1258,8 +1256,6 @@ def test_negation_filter_keywords():
         assert result['search_rag'] is True
         assert result['hard_filters'] == {}
         assert result['negation_filters'] == expected_negation_filters
-        # Could have soft_filters for other terms
-        print(f"✓ Negation filter test passed: {query}")
 
 def test_default_soft_filter_behavior():
     """Test that regular queries default to soft_filters."""
@@ -1296,7 +1292,6 @@ def test_default_soft_filter_behavior():
         assert result['hard_filters'] == {}
         assert result['negation_filters'] == {}
         assert result['soft_filters'] == expected_soft_filters
-        print(f"✓ Soft filter test passed: {query}")
 
 def test_user_example_query_classification():
     """Test the user's exact example query with correct filter classification."""
@@ -1328,7 +1323,6 @@ def test_user_example_query_classification():
     assert result['hard_filters'] == {"publication_date": {"gte": "2025-01-01", "lt": "2026-01-01"}}
     assert result['negation_filters'] == {"author": "John Wong"}
     assert result['soft_filters'] == {"tags": ["gemini"]}
-    print("✓ User example query classification test passed")
 
 def test_combined_filter_extraction():
     """Test queries with multiple filter types combined."""
@@ -1384,7 +1378,6 @@ def test_combined_filter_extraction():
         assert result['hard_filters'] == case["expected"]["hard_filters"]
         assert result['negation_filters'] == case["expected"]["negation_filters"]
         assert result['soft_filters'] == case["expected"]["soft_filters"]
-        print(f"✓ Combined filter test passed: {case['query'][:50]}...")
 
 def test_filter_validation_and_fallback():
     """Test that filter field validation works correctly."""
@@ -1437,7 +1430,6 @@ def test_filter_validation_and_fallback():
     assert result['hard_filters'] == {}
     assert result['negation_filters'] == {}
     assert result['soft_filters'] == {}
-    print("✓ Filter validation test passed")
 
 def test_fallback_includes_all_filter_types():
     """Test that fallback result includes all filter types."""
@@ -1460,7 +1452,6 @@ def test_fallback_includes_all_filter_types():
     assert result['hard_filters'] == {}
     assert result['negation_filters'] == {}
     assert result['soft_filters'] == {}
-    print("✓ Fallback filter types test passed")
 
 def test_edge_case_filter_combinations():
     """Test edge cases and unusual filter combinations."""
@@ -1516,8 +1507,6 @@ def test_edge_case_filter_combinations():
         
         if "expected_hard_filters" in case:
             assert result['hard_filters'] == case["expected_hard_filters"]
-        
-        print(f"✓ Edge case test passed: {case['query'][:30]}...")
 
 def test_non_rag_queries_have_empty_filters():
     """Test that non-RAG queries have empty filter fields."""
@@ -1552,8 +1541,6 @@ def test_non_rag_queries_have_empty_filters():
         assert result['hard_filters'] == {}
         assert result['negation_filters'] == {}
         assert result['soft_filters'] == {}
-        print(f"✓ Non-RAG query test passed: {query[:30]}...")
-
 
 def test_search_only_query_detection():
     """Test detection of search-only queries that should use SEARCH_SUMMARY_MODE."""
@@ -1589,7 +1576,6 @@ def test_search_only_query_detection():
         # QueryRewriter now converts SEARCH_SUMMARY_MODE to the full prompt
         assert "If no context documents are provided" in result['llm_query'], f"Should have search summary prompt for: {query}"
         assert "Document Summary" in result['llm_query'], f"Should have search summary sections for: {query}"
-        print(f"✓ Search-only detection test passed: {query}")
 
 
 def test_question_queries_not_search_only():
@@ -1625,7 +1611,7 @@ def test_question_queries_not_search_only():
         # QueryRewriter now returns full prompts, not SEARCH_SUMMARY_MODE
         assert "If no context documents are provided" not in result['llm_query'], f"Should NOT be search summary for: {query}"
         assert "based on the provided context" in result['llm_query'].lower(), f"Should use context reference for: {query}"
-        print(f"✓ Question query test passed: {query}")
+
 
 
 def test_build_final_llm_query_method():
@@ -1640,7 +1626,6 @@ def test_build_final_llm_query_method():
     assert "Document Summary" in search_summary_prompt
     assert "Key Topics" in search_summary_prompt
     assert "Question Suggestions" in search_summary_prompt
-    print("✓ SEARCH_SUMMARY_MODE conversion test passed")
     
     # Test regular prompt pass-through
     regular_prompt = "Based on the provided context, explain machine learning."
@@ -1819,4 +1804,3 @@ def test_transform_query_debug_mode_empty_rewrite_validation():
         assert "embedding_texts.rewrite is required for RAG queries" in str(error)
         assert error.raw_response == str(mock_response)
         assert error.parsed_data == mock_response
-    print("✓ Regular prompt pass-through test passed")

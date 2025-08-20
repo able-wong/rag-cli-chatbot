@@ -264,7 +264,6 @@ class LLMClient:
         # Clean up extra whitespace
         cleaned = re.sub(r'\n\s*\n', '\n', cleaned.strip())
         
-        logger.debug(f"Removed thinking blocks, remaining text: '{cleaned[:200]}...'")
         return cleaned
     
     def _strip_markdown_json_wrapper(self, text: str) -> str:
