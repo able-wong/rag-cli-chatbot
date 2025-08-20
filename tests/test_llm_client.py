@@ -1,6 +1,5 @@
 import unittest
-from unittest.mock import Mock, patch
-import json
+from unittest.mock import patch
 import sys
 import os
 

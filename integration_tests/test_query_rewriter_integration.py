@@ -287,4 +287,4 @@ class TestQueryRewriterIntegration:
         print(f"  Rewrite (clean): '{rewrite_text}'")
         print(f"  HyDE texts: {len(hyde_texts)} generated")
         print(f"  Soft filters: {soft_filters}")
-        print(f"  All filter information properly separated from embeddings")
+        print("  All filter information properly separated from embeddings")
