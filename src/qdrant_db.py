@@ -1,7 +1,22 @@
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams, PointStruct, ScoredPoint, Filter, FieldCondition, MatchValue, MatchAny, DatetimeRange, Prefetch, FusionQuery, Fusion, SparseVector
+from qdrant_client.models import (
+    DatetimeRange,
+    Distance,
+    FieldCondition,
+    Filter,
+    Fusion,
+    FusionQuery,
+    MatchAny,
+    MatchValue,
+    PointStruct,
+    Prefetch,
+    ScoredPoint,
+    SparseVector,
+    VectorParams,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +28,7 @@ class QdrantDB:
         self.client = None
         self._initialize_client()
         self._validate_payload_indexes()
-    
+
     def _initialize_client(self):
         """Initialize Qdrant client based on configuration."""
         try:
@@ -31,11 +46,11 @@ class QdrantDB:
                 port = self.config.get('port', 6333)
                 self.client = QdrantClient(host=host, port=port)
                 logger.info(f"Initialized Qdrant local client: {host}:{port}")
-                
+
         except Exception as e:
             logger.error(f"Failed to initialize Qdrant client: {e}")
             raise
-    
+
     def test_connection(self) -> bool:
         """Test connection to Qdrant server."""
         try:
@@ -44,7 +59,7 @@ class QdrantDB:
         except Exception as e:
             logger.error(f"Failed to connect to Qdrant: {e}")
             return False
-    
+
     def collection_exists(self) -> bool:
         """Check if the collection exists."""
         try:
@@ -54,23 +69,23 @@ class QdrantDB:
         except Exception as e:
             logger.error(f"Error checking collection existence: {e}")
             return False
-    
+
     def create_collection(self, vector_size: int) -> bool:
         """Create a collection with the specified vector size."""
         try:
             if self.collection_exists():
                 logger.info(f"Collection '{self.collection_name}' already exists")
                 return True
-            
+
             # Map distance metric string to Qdrant Distance enum
             distance_map = {
                 'cosine': Distance.COSINE,
                 'euclidean': Distance.EUCLID,
                 'dot': Distance.DOT
             }
-            
+
             distance = distance_map.get(self.distance_metric, Distance.COSINE)
-            
+
             self.client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config=VectorParams(
@@ -78,18 +93,18 @@ class QdrantDB:
                     distance=distance
                 )
             )
-            
+
             logger.info(f"Created collection '{self.collection_name}' with vector size {vector_size}")
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to create collection: {e}")
             return False
-    
+
     def search(
-        self, 
-        query_vector: List[float], 
-        limit: int = 5, 
+        self,
+        query_vector: List[float],
+        limit: int = 5,
         score_threshold: Optional[float] = None,
         filters: Optional[Dict[str, Any]] = None,
         negation_filters: Optional[Dict[str, Any]] = None
@@ -176,15 +191,15 @@ class QdrantDB:
             if not self.collection_exists():
                 logger.warning(f"Collection '{self.collection_name}' does not exist")
                 return []
-            
+
             # Check if we have any vectors to search with
             if not dense_vectors:
                 logger.warning("No dense vectors provided for hybrid search")
                 return []
-            
+
             # Build prefetch queries for all dense vectors
             prefetch_queries = []
-            
+
             # Add dense vector prefetches (keywords + HyDE personas)
             for i, dense_vector in enumerate(dense_vectors):
                 prefetch_params = {
@@ -192,35 +207,35 @@ class QdrantDB:
                     "using": "dense",
                     "limit": limit * 2  # Fetch more for better RRF fusion
                 }
-                
+
                 # Apply score threshold to individual vector searches before fusion
                 if score_threshold is not None:
                     prefetch_params["score_threshold"] = score_threshold
-                
+
                 prefetch_queries.append(Prefetch(**prefetch_params))
-            
+
             # Add sparse vector prefetch if provided
             if sparse_vector and sparse_vector.get("indices") and sparse_vector.get("values"):
                 sparse_query = SparseVector(
                     indices=sparse_vector["indices"],
                     values=sparse_vector["values"]
                 )
-                
+
                 sparse_prefetch_params = {
                     "query": sparse_query,
                     "using": "sparse",
                     "limit": limit * 2
                 }
-                
+
                 # Apply score threshold to sparse vector search before fusion
                 if score_threshold is not None:
                     sparse_prefetch_params["score_threshold"] = score_threshold
-                
+
                 prefetch_queries.append(Prefetch(**sparse_prefetch_params))
                 logger.info(f"Added sparse vector to hybrid search with {len(sparse_vector['indices'])} dimensions")
             else:
                 logger.warning("Sparse vector not provided or invalid, using dense-only hybrid search")
-            
+
             # Build query parameters
             query_params = {
                 "collection_name": self.collection_name,
@@ -229,12 +244,12 @@ class QdrantDB:
                 "limit": limit,
                 "with_payload": True
             }
-            
+
             # Score threshold is now applied at prefetch level (individual vector searches)
             # This ensures filtering happens BEFORE RRF fusion, preserving semantic meaning
             if score_threshold is not None:
                 logger.debug(f"Applied score threshold {score_threshold} to individual prefetch queries before RRF fusion")
-            
+
             # Build combined filter with both positive and negative conditions
             if filters or negation_filters:
                 qdrant_filter = self._build_combined_filter(filters, negation_filters)
@@ -242,7 +257,7 @@ class QdrantDB:
                     # Apply filter to all prefetch queries
                     for prefetch in prefetch_queries:
                         prefetch.filter = qdrant_filter
-                        
+
                     # Log applied filters
                     applied_filters = []
                     if filters:
@@ -250,10 +265,10 @@ class QdrantDB:
                     if negation_filters:
                         applied_filters.extend([f"-{k}" for k in negation_filters.keys()])
                     logger.info(f"Applied hybrid search filters: {applied_filters}")
-            
+
             # Perform hybrid search with RRF fusion
             results = self.client.query_points(**query_params).points
-            
+
             # Always normalize RRF scores for consistency across single/multi-vector searches
             if results:
                 # Stage 1: Normalize all RRF scores to 0.5-0.95 range
@@ -264,39 +279,39 @@ class QdrantDB:
             else:
                 logger.info(f"Hybrid search found 0 results using RRF fusion with {len(dense_vectors)} dense vectors")
                 return results
-            
+
         except Exception as e:
             logger.error(f"Hybrid search failed: {e}")
             return []
-    
+
     def scroll_collection(self, limit: int = 10) -> List[PointStruct]:
         """Scroll through collection to get sample points (for testing)."""
         try:
             if not self.collection_exists():
                 logger.warning(f"Collection '{self.collection_name}' does not exist")
                 return []
-            
+
             results = self.client.scroll(
                 collection_name=self.collection_name,
                 limit=limit,
                 with_payload=True,
                 with_vectors=False
             )
-            
+
             points = results[0]  # First element contains the points
             logger.info(f"Retrieved {len(points)} points from collection")
             return points
-            
+
         except Exception as e:
             logger.error(f"Scroll failed: {e}")
             return []
-    
+
     def get_collection_info(self) -> Optional[Dict[str, Any]]:
         """Get information about the collection."""
         try:
             if not self.collection_exists():
                 return None
-            
+
             info = self.client.get_collection(self.collection_name)
             return {
                 'name': self.collection_name,
@@ -305,29 +320,29 @@ class QdrantDB:
                 'indexed_vectors_count': info.indexed_vectors_count,
                 'points_count': info.points_count
             }
-            
+
         except Exception as e:
             logger.error(f"Failed to get collection info: {e}")
             return None
-    
+
     def _validate_payload_indexes(self):
         """Validate that required payload indexes exist for hybrid search functionality."""
         required_indexes = ['tags', 'author', 'publication_date']
-        
+
         try:
             if not self.collection_exists():
                 logger.info("Collection does not exist yet, skipping payload index validation")
                 return
-            
+
             # Get collection info to check payload schema
             collection_info = self.client.get_collection(self.collection_name)
             payload_schema = getattr(collection_info.config, 'params', {}).get('payload_schema', {})
-            
+
             missing_indexes = []
             for field in required_indexes:
                 if field not in payload_schema:
                     missing_indexes.append(field)
-            
+
             if missing_indexes:
                 logger.warning(
                     f"Missing payload indexes for hybrid search: {missing_indexes}. "
@@ -336,10 +351,10 @@ class QdrantDB:
                 )
             else:
                 logger.info("All required payload indexes for hybrid search are present")
-                
+
         except Exception as e:
             logger.warning(f"Could not validate payload indexes: {e}. Hybrid search may have degraded performance.")
-    
+
     def _normalize_rrf_scores(self, results: List[ScoredPoint]) -> List[ScoredPoint]:
         """
         Normalize RRF scores to a 0.5-0.95 range for consistency and compatibility.
@@ -354,38 +369,38 @@ class QdrantDB:
         """
         if not results:
             return results
-        
+
         try:
             # Calculate normalization parameters
             max_score = max(result.score for result in results)
             min_score = min(result.score for result in results)
-            
+
             # Avoid division by zero
             if max_score == min_score:
                 # All scores are identical, set them all to a high value
                 for result in results:
                     result.score = 0.95
                 return results
-            
+
             # Linear normalization to 0.95-0.5 range (preserves relative ranking)
             # Higher range ceiling ensures top results still pass typical thresholds
             score_range = max_score - min_score
             target_max = 0.95
             target_min = 0.5
             target_range = target_max - target_min
-            
+
             for result in results:
                 # Normalize: (score - min) / range * target_range + target_min
                 normalized_score = ((result.score - min_score) / score_range) * target_range + target_min
                 result.score = normalized_score
-            
+
             logger.debug(f"Normalized RRF scores from [{min_score:.3f}-{max_score:.3f}] to [{target_min}-{target_max}] range")
             return results
-            
+
         except Exception as e:
             logger.error(f"Error normalizing RRF scores: {e}")
             return results
-    
+
     def _build_combined_filter(self, filters: Optional[Dict[str, Any]], negation_filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
         """
         Build a combined Qdrant Filter object with both positive and negative conditions.
@@ -399,18 +414,18 @@ class QdrantDB:
         """
         must_conditions = []
         must_not_conditions = []
-        
+
         try:
             # Build positive conditions (must match)
             if filters:
                 positive_conditions = self._build_filter_conditions(filters)
                 must_conditions.extend(positive_conditions)
-            
+
             # Build negative conditions (must NOT match)
             if negation_filters:
                 negative_conditions = self._build_filter_conditions(negation_filters)
                 must_not_conditions.extend(negative_conditions)
-            
+
             # Create Filter object with both must and must_not conditions
             if must_conditions or must_not_conditions:
                 filter_params = {}
@@ -418,11 +433,11 @@ class QdrantDB:
                     filter_params['must'] = must_conditions
                 if must_not_conditions:
                     filter_params['must_not'] = must_not_conditions
-                
+
                 return Filter(**filter_params)
             else:
                 return None
-                
+
         except Exception as e:
             logger.error(f"Error building combined filter: {e}")
             return None
@@ -438,7 +453,7 @@ class QdrantDB:
             List of FieldCondition objects
         """
         conditions = []
-        
+
         try:
             # Handle author filter
             if 'author' in filters and filters['author']:
@@ -448,7 +463,7 @@ class QdrantDB:
                         match=MatchValue(value=filters['author'])
                     )
                 )
-            
+
             # Handle tags filter (array field)
             if 'tags' in filters and filters['tags']:
                 tags = filters['tags'] if isinstance(filters['tags'], list) else [filters['tags']]
@@ -458,11 +473,11 @@ class QdrantDB:
                         match=MatchAny(any=tags)
                     )
                 )
-            
+
             # Handle publication_date filter
             if 'publication_date' in filters and filters['publication_date']:
                 pub_date = filters['publication_date']
-                
+
                 # Handle new date range format with gte/lt for DATETIME index
                 if isinstance(pub_date, dict) and ('gte' in pub_date or 'lt' in pub_date):
                     # Use datetime range for efficient filtering with DATETIME index
@@ -471,7 +486,7 @@ class QdrantDB:
                         range_conditions['gte'] = pub_date['gte']
                     if 'lt' in pub_date:
                         range_conditions['lt'] = pub_date['lt']
-                    
+
                     conditions.append(
                         FieldCondition(
                             key="publication_date",
@@ -479,7 +494,7 @@ class QdrantDB:
                         )
                     )
                     logger.debug(f"Applied publication_date range filter: {range_conditions}")
-                
+
                 # Handle legacy string format for backward compatibility
                 elif isinstance(pub_date, str):
                     if len(pub_date) == 4:  # Year only (e.g., "2023")
@@ -501,7 +516,7 @@ class QdrantDB:
                                 match=MatchValue(value=pub_date)
                             )
                         )
-            
+
             # Handle title filter (if provided)
             if 'title' in filters and filters['title']:
                 conditions.append(
@@ -510,9 +525,9 @@ class QdrantDB:
                         match=MatchValue(value=filters['title'])
                     )
                 )
-            
+
             return conditions
-                
+
         except Exception as e:
             logger.error(f"Error building filter conditions: {e}")
             return []

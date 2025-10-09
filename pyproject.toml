@@ -1,0 +1,55 @@
+[project]
+name = "rag-cli-chatbot"
+version = "1.0.0"
+description = "RAG-powered CLI chatbot with vector search and query rewriting"
+requires-python = ">=3.13"
+readme = "README.md"
+
+[tool.ruff]
+# Exclude debug and research scripts from linting
+exclude = [
+    "debug_*.py",
+    "check_*.py",
+    "research_scripts/",
+    "output/",
+    "venv/",
+    ".git/",
+    "__pycache__/",
+    "*.egg-info/",
+]
+
+# Line length
+line-length = 120
+
+# Python version
+target-version = "py313"
+
+[tool.ruff.lint]
+# Enable pycodestyle (E), Pyflakes (F), and other common rules
+select = ["E", "F", "W", "I", "N"]
+
+# Allow autofix for all enabled rules
+fixable = ["ALL"]
+unfixable = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["integration_tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+    "--disable-warnings",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+]

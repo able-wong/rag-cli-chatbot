@@ -3,14 +3,15 @@ Unit tests for QueryRewriter class.
 Tests query transformation logic with mocked LLM responses.
 """
 
-import sys
 import os
+import sys
 from unittest.mock import Mock
 
 # Add src directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from query_rewriter import QueryRewriter
+
 
 def create_mock_llm_client():
     """Create a mock LLM client for testing."""
@@ -20,7 +21,7 @@ def create_mock_llm_client():
     mock_client.get_json_response = Mock()
     return mock_client
 
-def create_mock_response(search_rag, rewrite_text="", hyde_texts=None, llm_query="", 
+def create_mock_response(search_rag, rewrite_text="", hyde_texts=None, llm_query="",
                         hard_filters=None, negation_filters=None, soft_filters=None, source="llm"):
     """Create a standardized mock response with new embedding_texts structure."""
     if hyde_texts is None:
@@ -31,7 +32,7 @@ def create_mock_response(search_rag, rewrite_text="", hyde_texts=None, llm_query
         negation_filters = {}
     if soft_filters is None:
         soft_filters = {}
-        
+
     return {
         "search_rag": search_rag,
         "embedding_texts": {
@@ -53,9 +54,9 @@ def test_query_rewriter_initialization():
         'temperature': 0.1,
         'max_tokens': 512
     }
-    
+
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     assert rewriter.llm_client == mock_llm
     assert rewriter.trigger_phrase == '@knowledgebase'
     assert rewriter.retrieval_strategy == 'rewrite'  # Default strategy
@@ -68,7 +69,7 @@ def test_trigger_detection_in_transformation():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock valid JSON response with trigger detected
     mock_response = {
         "search_rag": True,
@@ -82,9 +83,9 @@ def test_trigger_detection_in_transformation():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("@knowledgebase What is Python?")
-    
+
     assert result['search_rag'] is True
     assert 'embedding_texts' in result
     assert 'rewrite' in result['embedding_texts']
@@ -102,7 +103,7 @@ def test_no_trigger_detection():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock valid JSON response without trigger
     mock_response = {
         "search_rag": False,
@@ -116,9 +117,9 @@ def test_no_trigger_detection():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("What is the weather today?")
-    
+
     assert result['search_rag'] is False
     assert 'embedding_texts' in result
     assert result['embedding_texts']['rewrite'] == ""
@@ -131,7 +132,7 @@ def test_json_parsing_markdown_wrapped():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock JSON response (LLMClient handles markdown parsing internally)
     mock_response = create_mock_response(
         search_rag=True,
@@ -140,9 +141,9 @@ def test_json_parsing_markdown_wrapped():
         llm_query="Explain machine learning algorithms"
     )
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("@knowledgebase Explain ML algorithms")
-    
+
     assert result['search_rag'] is True
     assert 'embedding_texts' in result
     assert result['embedding_texts']['rewrite'] == "machine learning algorithms"
@@ -152,12 +153,12 @@ def test_json_parsing_markdown_wrapped():
 
 def test_source_field_llm_vs_fallback():
     """Test that source field correctly distinguishes between LLM and fallback responses."""
-    
+
     # Test 1: Successful LLM response
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     mock_response = create_mock_response(
         search_rag=True,
         rewrite_text="test content",
@@ -165,13 +166,13 @@ def test_source_field_llm_vs_fallback():
         llm_query="test query"
     )
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("@knowledgebase test query")
     assert result['source'] == 'llm', "Should indicate LLM source for successful response"
-    
+
     # Test 2: LLM exception triggers fallback
     mock_llm.get_json_response.side_effect = Exception("LLM service unavailable")
-    
+
     result = rewriter.transform_query("@knowledgebase test query")
     assert result['source'] == 'fallback', "Should indicate fallback source when LLM fails"
 
@@ -180,7 +181,7 @@ def test_json_parsing_with_extra_text():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock JSON response (LLMClient handles text extraction internally)
     mock_response = {
         "search_rag": False,
@@ -194,9 +195,9 @@ def test_json_parsing_with_extra_text():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("Why do cats purr?")
-    
+
     assert result['search_rag'] is False
     assert result['embedding_texts']['rewrite'] == "cats behavior"
     assert result['llm_query'] == "Why do cats purr?"
@@ -206,12 +207,12 @@ def test_malformed_json_fallback():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock malformed JSON response
     mock_llm.get_llm_response.return_value = "This is not valid JSON at all!"
-    
+
     result = rewriter.transform_query("@knowledgebase What is AI?")
-    
+
     # Should fall back to simple logic
     assert result['search_rag'] is True  # Trigger detected
     assert result['embedding_texts']['rewrite'] == "What is AI?"  # Trigger removed
@@ -223,7 +224,7 @@ def test_missing_fields_fallback():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock incomplete JSON response - missing embedding_texts which is now required
     mock_response = {
         "search_rag": True,
@@ -231,9 +232,9 @@ def test_missing_fields_fallback():
         # Missing embedding_texts field
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("@knowledgebase Test query")
-    
+
     # Should use fallback
     assert result['search_rag'] is True
     assert result['embedding_texts']['rewrite'] == "Test query"
@@ -245,7 +246,7 @@ def test_trigger_detection_mismatch_correction():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock response where LLM incorrectly says no trigger when there is one
     mock_response = {
         "search_rag": False,  # LLM says no trigger
@@ -259,9 +260,9 @@ def test_trigger_detection_mismatch_correction():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("@knowledgebase What is AI?")  # Actually has trigger
-    
+
     # Should correct the search_rag field
     assert result['search_rag'] is True  # Corrected to True
     assert result['embedding_texts']['rewrite'] == "artificial intelligence"
@@ -272,7 +273,7 @@ def test_case_insensitive_trigger_detection():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock response
     mock_response = {
         "search_rag": True,
@@ -286,14 +287,14 @@ def test_case_insensitive_trigger_detection():
         "llm_query": "How to design databases?"
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     # Test with different cases
     test_queries = [
         "@KNOWLEDGEBASE How to design databases?",
         "@KnowledgeBase How to design databases?",
         "Tell me @knowledgebase about databases"
     ]
-    
+
     for query in test_queries:
         result = rewriter.transform_query(query)
         assert result['search_rag'] is True
@@ -303,7 +304,7 @@ def test_empty_or_invalid_string_fields():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock response with empty embedding_texts
     mock_response = {
         "search_rag": True,
@@ -317,9 +318,9 @@ def test_empty_or_invalid_string_fields():
         "llm_query": "Valid query"
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("@knowledgebase Test")
-    
+
     # Should use fallback due to empty embedding_texts
     assert result['search_rag'] is True
     assert result['embedding_texts']['rewrite'] == "Test"  # Fallback value
@@ -330,7 +331,7 @@ def test_non_boolean_search_rag_conversion():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test string boolean conversion
     test_cases = [
         ("true", True),
@@ -340,7 +341,7 @@ def test_non_boolean_search_rag_conversion():
         ("yes", True),
         ("no", False)
     ]
-    
+
     for string_val, expected_bool in test_cases:
         mock_response = {
             "search_rag": string_val,
@@ -354,7 +355,7 @@ def test_non_boolean_search_rag_conversion():
             "llm_query": "test query"
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         # Use query that matches the expected boolean value
         query = "@knowledgebase test query" if expected_bool else "test query"
         result = rewriter.transform_query(query)
@@ -365,12 +366,12 @@ def test_llm_exception_handling():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock LLM client to raise exception
     mock_llm.get_json_response.side_effect = Exception("LLM service unavailable")
-    
+
     result = rewriter.transform_query("@knowledgebase What is Python?")
-    
+
     # Should use fallback
     assert result['search_rag'] is True
     assert result['embedding_texts']['rewrite'] == "What is Python?"
@@ -381,7 +382,7 @@ def test_connection_test_success():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock successful response with all required filter fields
     mock_response = {
         "search_rag": True,
@@ -395,7 +396,7 @@ def test_connection_test_success():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     success = rewriter.test_connection()
     assert success is True
 
@@ -404,12 +405,12 @@ def test_connection_test_failure():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test with exception
     mock_llm.get_json_response.side_effect = Exception("Connection failed")
     success = rewriter.test_connection()
     assert success is False
-    
+
     # Test with invalid response structure
     mock_llm.get_json_response.side_effect = None
     mock_llm.get_json_response.return_value = {"invalid": "response"}
@@ -421,7 +422,7 @@ def test_custom_trigger_phrase():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@search'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     mock_response = {
         "search_rag": True,
         "embedding_texts": {
@@ -434,11 +435,11 @@ def test_custom_trigger_phrase():
         "llm_query": "Custom search query"
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     # Should detect custom trigger
     result = rewriter.transform_query("@search custom query")
     assert result['search_rag'] is True
-    
+
     # Should not detect default trigger
     result = rewriter.transform_query("@knowledgebase default query")
     # The actual detection is done by the fallback logic checking actual trigger
@@ -449,12 +450,12 @@ def test_query_cleaning_in_fallback():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Force fallback with exception
     mock_llm.get_json_response.side_effect = Exception("Test exception")
-    
+
     result = rewriter.transform_query("@knowledgebase    What is machine learning?   ")
-    
+
     # Should clean the trigger phrase and whitespace
     assert result['search_rag'] is True
     assert result['embedding_texts']['rewrite'] == "What is machine learning?"
@@ -466,21 +467,21 @@ def test_empty_query_after_trigger_fallback():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Force fallback with exception
     mock_llm.get_json_response.side_effect = Exception("Test exception")
-    
+
     # Test with just trigger phrase
     result = rewriter.transform_query("@knowledgebase")
-    
+
     # Should detect trigger but not trigger RAG search due to empty content
     assert result['search_rag'] is False  # Should not trigger RAG with empty content
     assert result['embedding_texts']['rewrite'] == ""  # Empty after cleaning
     assert result['llm_query'] == "@knowledgebase"  # Original query preserved
-    
+
     # Test with trigger phrase and whitespace only
     result = rewriter.transform_query("@knowledgebase   ")
-    
+
     assert result['search_rag'] is False  # Should not trigger RAG with empty content
     assert result['embedding_texts']['rewrite'] == ""  # Empty after cleaning and stripping
     assert result['llm_query'] == "@knowledgebase   "  # Original query preserved
@@ -490,7 +491,7 @@ def test_conversational_follow_up_detection():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock response for conversational follow-up
     mock_response = {
         "search_rag": False,
@@ -504,9 +505,9 @@ def test_conversational_follow_up_detection():
         "llm_query": "Tell me more about the automation benefits based on context in previous conversation."
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("Tell me more about the automation benefits")
-    
+
     assert result['search_rag'] is False
     assert result['embedding_texts']['rewrite'] == ""
     assert "based on context in previous conversation" in result['llm_query']
@@ -516,14 +517,14 @@ def test_referential_query_detection():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test various referential patterns
     test_cases = [
         ("Can you elaborate on that approach?", "elaborate on that approach based on context in previous conversation"),
         ("What about the other method you mentioned?", "explain the other method based on context in previous conversation"),
         ("How does it compare to traditional methods?", "compare it to traditional methods based on context in previous conversation")
     ]
-    
+
     for query, expected_context_ref in test_cases:
         mock_response = {
             "search_rag": False,
@@ -537,9 +538,9 @@ def test_referential_query_detection():
             "llm_query": expected_context_ref.capitalize() + "."
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is False
         assert "based on context in previous conversation" in result['llm_query']
 
@@ -548,7 +549,7 @@ def test_general_question_no_context_reference():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock response for general question
     mock_response = {
         "search_rag": False,
@@ -562,9 +563,9 @@ def test_general_question_no_context_reference():
         "llm_query": "What is the capital of France?"
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("What is the capital of France?")
-    
+
     assert result['search_rag'] is False
     assert result['embedding_texts']['rewrite'] == ""
     assert "context" not in result['llm_query']
@@ -574,7 +575,7 @@ def test_rag_query_still_uses_provided_context():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock response for RAG query
     mock_response = {
         "search_rag": True,
@@ -588,9 +589,9 @@ def test_rag_query_still_uses_provided_context():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("@knowledgebase What are the benefits of machine learning?")
-    
+
     assert result['search_rag'] is True
     assert len(result['embedding_texts']['rewrite']) > 0
     assert "based on the provided context" in result['llm_query']
@@ -602,17 +603,17 @@ def test_rag_query_still_uses_provided_context():
 def test_unified_system_prompt_contains_both_strategies():
     """Test that unified system prompt contains instructions for both rewrite and hyde."""
     mock_llm = create_mock_llm_client()
-    
+
     # Test that both strategies use the same unified prompt
     rewrite_config = {'trigger_phrase': '@knowledgebase', 'retrieval_strategy': 'rewrite'}
     hyde_config = {'trigger_phrase': '@knowledgebase', 'retrieval_strategy': 'hyde'}
-    
+
     rewrite_rewriter = QueryRewriter(mock_llm, rewrite_config)
     hyde_rewriter = QueryRewriter(mock_llm, hyde_config)
-    
+
     # Both should have the same system prompt
     assert rewrite_rewriter.system_prompt == hyde_rewriter.system_prompt
-    
+
     # Unified prompt should contain instructions for both strategies
     prompt = rewrite_rewriter.system_prompt
     assert "embedding_texts" in prompt
@@ -629,7 +630,7 @@ def test_hyde_strategy_hypothetical_document_generation():
         'retrieval_strategy': 'hyde'
     }
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock HyDE response with hypothetical documents
     mock_response = {
         "search_rag": True,
@@ -647,9 +648,9 @@ def test_hyde_strategy_hypothetical_document_generation():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("@knowledgebase How do neural networks work?")
-    
+
     assert result['search_rag'] is True
     # Rewrite should contain keywords
     assert len(result['embedding_texts']['rewrite']) < 50  # Keywords are shorter
@@ -663,12 +664,12 @@ def test_hyde_strategy_hypothetical_document_generation():
 def test_embedding_texts_structure_consistency():
     """Test that all strategies return consistent embedding_texts structure."""
     mock_llm = create_mock_llm_client()
-    
+
     # Test with different strategies
     for strategy in ['rewrite', 'hyde']:
         config = {'trigger_phrase': '@knowledgebase', 'retrieval_strategy': strategy}
         rewriter = QueryRewriter(mock_llm, config)
-        
+
         mock_response = create_mock_response(
             search_rag=True,
             rewrite_text="machine learning",
@@ -676,9 +677,9 @@ def test_embedding_texts_structure_consistency():
             llm_query="Test query"
         )
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query("@knowledgebase What is machine learning?")
-        
+
         # All strategies should return the same structure
         assert result['search_rag'] is True
         assert 'embedding_texts' in result
@@ -700,7 +701,7 @@ def test_filters_field_initialization():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock response without hard_hard_filters field
     mock_response = {
         "search_rag": True,
@@ -714,9 +715,9 @@ def test_filters_field_initialization():
         "llm_query": "Explain Python programming based on the provided context."
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("@knowledgebase What is Python?")
-    
+
     # Should add empty hard_hard_filters field
     assert 'hard_filters' in result
     assert result['hard_filters'] == {}
@@ -726,7 +727,7 @@ def test_author_filter_extraction():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test various author filter patterns
     test_cases = [
         ("@knowledgebase papers by John Smith", {"author": "John Smith"}),
@@ -734,7 +735,7 @@ def test_author_filter_extraction():
         ("@knowledgebase research from Dr. Wilson", {"author": "Dr. Wilson"}),
         ("@knowledgebase Smith's work on AI", {"author": "Smith"}),
     ]
-    
+
     for query, expected_filters in test_cases:
         mock_response = {
             "search_rag": True,
@@ -748,9 +749,9 @@ def test_author_filter_extraction():
             "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is True
         assert result['hard_filters'] == expected_filters
         assert result['hard_filters']['author'] == expected_filters['author']
@@ -760,7 +761,7 @@ def test_publication_date_filter_extraction():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test various date filter patterns
     test_cases = [
         ("@knowledgebase articles from 2023", {"publication_date": "2023"}),
@@ -768,7 +769,7 @@ def test_publication_date_filter_extraction():
         ("@knowledgebase research from March 2025", {"publication_date": "2025-03"}),
         ("@knowledgebase documents from last year", {"publication_date": "2023"}),
     ]
-    
+
     for query, expected_filters in test_cases:
         mock_response = {
             "search_rag": True,
@@ -782,9 +783,9 @@ def test_publication_date_filter_extraction():
             "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is True
         assert result['hard_filters'] == expected_filters
         assert result['hard_filters']['publication_date'] == expected_filters['publication_date']
@@ -794,14 +795,14 @@ def test_explicit_tag_syntax_single_tag():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test explicit tag syntax patterns
     test_cases = [
         ("@knowledgebase documents with tag Python", {"tags": ["python"]}),
         ("@knowledgebase articles tagged as machine learning", {"tags": ["machine learning"]}),
         ("@knowledgebase search with tag AI", {"tags": ["ai"]}),
     ]
-    
+
     for query, expected_filters in test_cases:
         mock_response = {
             "search_rag": True,
@@ -815,9 +816,9 @@ def test_explicit_tag_syntax_single_tag():
             "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is True
         assert result['hard_filters'] == expected_filters
         assert result['hard_filters']['tags'] == expected_filters['tags']
@@ -827,13 +828,13 @@ def test_explicit_tag_syntax_multiple_tags():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test multiple explicit tags
     test_cases = [
         ("@knowledgebase articles with tags python, AI", {"tags": ["python", "ai"]}),
         ("@knowledgebase research with tags machine learning, deep learning", {"tags": ["machine learning", "deep learning"]}),
     ]
-    
+
     for query, expected_filters in test_cases:
         mock_response = {
             "search_rag": True,
@@ -847,9 +848,9 @@ def test_explicit_tag_syntax_multiple_tags():
             "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is True
         assert result['hard_filters'] == expected_filters
         assert result['hard_filters']['tags'] == expected_filters['tags']
@@ -859,7 +860,7 @@ def test_no_auto_tag_extraction():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test queries that should NOT extract tags automatically
     test_cases = [
         ("@knowledgebase documents about Python", {}),
@@ -868,7 +869,7 @@ def test_no_auto_tag_extraction():
         ("@knowledgebase papers on web development", {}),
         ("@knowledgebase search on vibe coding", {}),
     ]
-    
+
     for query, expected_filters in test_cases:
         mock_response = {
             "search_rag": True,
@@ -882,9 +883,9 @@ def test_no_auto_tag_extraction():
             "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is True
         assert result['hard_filters'] == expected_filters
         # Verify no tags were extracted
@@ -895,17 +896,17 @@ def test_mixed_explicit_and_auto_filters():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test combining explicit tags with auto-extracted author/date
     test_cases = [
-        ("@knowledgebase papers by John Smith with tag machine learning", 
+        ("@knowledgebase papers by John Smith with tag machine learning",
          {"author": "John Smith", "tags": ["machine learning"]}),
-        ("@knowledgebase articles with tags python, AI from 2023", 
+        ("@knowledgebase articles with tags python, AI from 2023",
          {"tags": ["python", "ai"], "publication_date": "2023"}),
         ("@knowledgebase search by Jane Doe with tag robotics from March 2024",
          {"author": "Jane Doe", "tags": ["robotics"], "publication_date": "2024-03"}),
     ]
-    
+
     for query, expected_filters in test_cases:
         mock_response = {
             "search_rag": True,
@@ -919,9 +920,9 @@ def test_mixed_explicit_and_auto_filters():
             "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is True
         assert result['hard_filters'] == expected_filters
 
@@ -930,7 +931,7 @@ def test_combined_filters_extraction():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test complex query with multiple filters
     query = "@knowledgebase Smith's papers about AI from 2023"
     expected_filters = {
@@ -938,7 +939,7 @@ def test_combined_filters_extraction():
         "tags": ["ai"],
         "publication_date": "2023"
     }
-    
+
     mock_response = {
         "search_rag": True,
         "embedding_texts": {
@@ -951,9 +952,9 @@ def test_combined_filters_extraction():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query(query)
-    
+
     assert result['search_rag'] is True
     assert result['hard_filters'] == expected_filters
     assert result['hard_filters']['author'] == "Smith"
@@ -965,14 +966,14 @@ def test_complex_natural_language_query():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     query = "@knowledgebase search on vibe coding from John Wong published in March 2025, then explain what is vibe coding, and pros/cons"
     expected_filters = {
         "author": "John Wong",
         "tags": ["vibe coding"],
         "publication_date": "2025-03"
     }
-    
+
     mock_response = {
         "search_rag": True,
         "embedding_texts": {
@@ -985,9 +986,9 @@ def test_complex_natural_language_query():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query(query)
-    
+
     assert result['search_rag'] is True
     assert result['hard_filters'] == expected_filters
     assert result['hard_filters']['author'] == "John Wong"
@@ -999,7 +1000,7 @@ def test_filters_field_validation():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test with invalid filters type (not a dict)
     mock_response = {
         "search_rag": True,
@@ -1013,9 +1014,9 @@ def test_filters_field_validation():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("@knowledgebase test query")
-    
+
     # Should reset to empty dict
     assert result['hard_filters'] == {}
 
@@ -1025,7 +1026,7 @@ def test_no_filters_for_non_rag_queries():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     mock_response = {
         "search_rag": False,
         "embedding_texts": {
@@ -1038,9 +1039,9 @@ def test_no_filters_for_non_rag_queries():
         "llm_query": "What is the weather today?"
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("What is the weather today?")
-    
+
     assert result['search_rag'] is False
     assert result['hard_filters'] == {}
 
@@ -1049,12 +1050,12 @@ def test_filters_fallback_behavior():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Force fallback with exception
     mock_llm.get_json_response.side_effect = Exception("LLM service unavailable")
-    
+
     result = rewriter.transform_query("@knowledgebase What is Python?")
-    
+
     # Should use fallback and include empty filters
     assert result['search_rag'] is True
     assert result['embedding_texts']['rewrite'] == "What is Python?"
@@ -1067,7 +1068,7 @@ def test_empty_filters_handling():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test with null filters
     mock_response = {
         "search_rag": True,
@@ -1081,9 +1082,9 @@ def test_empty_filters_handling():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("@knowledgebase test query")
-    
+
     # Should convert None to empty dict
     assert result['hard_filters'] == {}
 
@@ -1092,11 +1093,11 @@ def test_partial_filters_extraction():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test query with only author filter
     query = "@knowledgebase latest papers by Dr. Johnson"
     expected_filters = {"author": "Dr. Johnson"}
-    
+
     mock_response = {
         "search_rag": True,
         "embedding_texts": {
@@ -1109,9 +1110,9 @@ def test_partial_filters_extraction():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query(query)
-    
+
     assert result['search_rag'] is True
     assert result['hard_filters'] == expected_filters
     assert 'tags' not in result['hard_filters']
@@ -1122,7 +1123,7 @@ def test_filters_with_conversational_queries():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     mock_response = {
         "search_rag": False,
         "embedding_texts": {
@@ -1135,9 +1136,9 @@ def test_filters_with_conversational_queries():
         "llm_query": "Tell me more about those techniques based on context in previous conversation."
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     result = rewriter.transform_query("Tell me more about those techniques")
-    
+
     assert result['search_rag'] is False
     assert result['hard_filters'] == {}
     assert "based on context in previous conversation" in result['llm_query']
@@ -1147,7 +1148,7 @@ def test_filters_in_connection_test():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock successful response with all filter types
     mock_response = {
         "search_rag": True,
@@ -1161,10 +1162,10 @@ def test_filters_in_connection_test():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     success = rewriter.test_connection()
     assert success is True
-    
+
     # Test that connection test fails when embedding_texts structure is invalid
     mock_response_invalid_structure = {
         "search_rag": True,
@@ -1178,7 +1179,7 @@ def test_filters_in_connection_test():
         "soft_filters": {}
     }
     mock_llm.get_json_response.return_value = mock_response_invalid_structure
-    
+
     success = rewriter.test_connection()
     assert success is False  # Should fail because falls back to fallback (source != 'llm')
 
@@ -1191,7 +1192,7 @@ def test_strict_hard_filter_keywords():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test explicit restrictive keywords that should trigger hard_filters
     hard_filter_cases = [
         ("@knowledgebase papers ONLY from 2025", {"publication_date": {"gte": "2025-01-01", "lt": "2026-01-01"}}),
@@ -1200,7 +1201,7 @@ def test_strict_hard_filter_keywords():
         ("@knowledgebase research LIMITED TO machine learning", {"tags": ["machine learning"]}),
         ("@knowledgebase papers SOLELY by Dr. Johnson", {"author": "Dr. Johnson"}),
     ]
-    
+
     for query, expected_hard_filters in hard_filter_cases:
         mock_response = {
             "search_rag": True,
@@ -1214,9 +1215,9 @@ def test_strict_hard_filter_keywords():
             "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is True
         assert result['hard_filters'] == expected_hard_filters
         assert result['negation_filters'] == {}
@@ -1226,7 +1227,7 @@ def test_negation_filter_keywords():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test negation keywords that should trigger negation_filters
     negation_filter_cases = [
         ("@knowledgebase papers not from John Wong", {"author": "John Wong"}),
@@ -1236,7 +1237,7 @@ def test_negation_filter_keywords():
         ("@knowledgebase work without tag AI", {"tags": ["ai"]}),
         ("@knowledgebase papers other than Dr. Wilson", {"author": "Dr. Wilson"}),
     ]
-    
+
     for query, expected_negation_filters in negation_filter_cases:
         mock_response = {
             "search_rag": True,
@@ -1250,9 +1251,9 @@ def test_negation_filter_keywords():
             "soft_filters": {}
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is True
         assert result['hard_filters'] == {}
         assert result['negation_filters'] == expected_negation_filters
@@ -1262,7 +1263,7 @@ def test_default_soft_filter_behavior():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test that regular author/date/tag mentions go to soft_filters
     soft_filter_cases = [
         ("@knowledgebase papers by Smith", {"author": "Smith"}),
@@ -1271,7 +1272,7 @@ def test_default_soft_filter_behavior():
         ("@knowledgebase documents about Python", {"tags": ["python"]}),
         ("@knowledgebase work on machine learning", {"tags": ["machine learning"]}),
     ]
-    
+
     for query, expected_soft_filters in soft_filter_cases:
         mock_response = {
             "search_rag": True,
@@ -1285,9 +1286,9 @@ def test_default_soft_filter_behavior():
             "soft_filters": expected_soft_filters
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is True
         assert result['hard_filters'] == {}
         assert result['negation_filters'] == {}
@@ -1298,10 +1299,10 @@ def test_user_example_query_classification():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # The user's exact example
     query = "@knowledgebase search papers published only in 2025 on vibe coding, not from John Wong, with tags gemini"
-    
+
     expected_response = {
         "search_rag": True,
         "embedding_texts": {
@@ -1313,11 +1314,11 @@ def test_user_example_query_classification():
         "negation_filters": {"author": "John Wong"},
         "soft_filters": {"tags": ["gemini"]}
     }
-    
+
     mock_llm.get_json_response.return_value = expected_response
-    
+
     result = rewriter.transform_query(query)
-    
+
     # Validate correct filter classification
     assert result['search_rag'] is True
     assert result['hard_filters'] == {"publication_date": {"gte": "2025-01-01", "lt": "2026-01-01"}}
@@ -1329,7 +1330,7 @@ def test_combined_filter_extraction():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test complex combinations
     combined_cases = [
         {
@@ -1357,7 +1358,7 @@ def test_combined_filter_extraction():
             }
         }
     ]
-    
+
     for case in combined_cases:
         mock_response = {
             "search_rag": True,
@@ -1371,9 +1372,9 @@ def test_combined_filter_extraction():
             "soft_filters": case["expected"]["soft_filters"]
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(case["query"])
-        
+
         assert result['search_rag'] is True
         assert result['hard_filters'] == case["expected"]["hard_filters"]
         assert result['negation_filters'] == case["expected"]["negation_filters"]
@@ -1384,7 +1385,7 @@ def test_filter_validation_and_fallback():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test with missing filter fields (should be added by validation)
     incomplete_response = {
         "search_rag": True,
@@ -1399,9 +1400,9 @@ def test_filter_validation_and_fallback():
         # Missing all filter fields
     }
     mock_llm.get_json_response.return_value = incomplete_response
-    
+
     result = rewriter.transform_query("@knowledgebase test query")
-    
+
     # Should have all filter fields added by validation
     assert 'hard_filters' in result
     assert 'negation_filters' in result
@@ -1409,7 +1410,7 @@ def test_filter_validation_and_fallback():
     assert isinstance(result['hard_filters'], dict)
     assert isinstance(result['negation_filters'], dict)
     assert isinstance(result['soft_filters'], dict)
-    
+
     # Test with invalid filter field types
     invalid_response = {
         "search_rag": True,
@@ -1423,9 +1424,9 @@ def test_filter_validation_and_fallback():
         "soft_filters": None
     }
     mock_llm.get_json_response.return_value = invalid_response
-    
+
     result = rewriter.transform_query("@knowledgebase test query")
-    
+
     # Should be reset to empty dicts by validation
     assert result['hard_filters'] == {}
     assert result['negation_filters'] == {}
@@ -1436,12 +1437,12 @@ def test_fallback_includes_all_filter_types():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Force fallback with exception
     mock_llm.get_json_response.side_effect = Exception("LLM service unavailable")
-    
+
     result = rewriter.transform_query("@knowledgebase What is Python?")
-    
+
     # Should use fallback and include all filter types
     assert result['search_rag'] is True
     assert result['embedding_texts']['rewrite'] == "What is Python?"
@@ -1458,7 +1459,7 @@ def test_edge_case_filter_combinations():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     edge_cases = [
         # Empty query after trigger
         {
@@ -1478,7 +1479,7 @@ def test_edge_case_filter_combinations():
             "expected_hard_filters": {"author": "Smith"}
         }
     ]
-    
+
     for case in edge_cases:
         if case["query"] == "@knowledgebase":
             # This should trigger fallback logic
@@ -1497,14 +1498,14 @@ def test_edge_case_filter_combinations():
                 "soft_filters": {}
             }
             mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(case["query"])
-        
+
         assert result['search_rag'] == case["expected_search_rag"]
         assert 'hard_filters' in result
         assert 'negation_filters' in result
         assert 'soft_filters' in result
-        
+
         if "expected_hard_filters" in case:
             assert result['hard_filters'] == case["expected_hard_filters"]
 
@@ -1513,14 +1514,14 @@ def test_non_rag_queries_have_empty_filters():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test non-RAG queries
     non_rag_cases = [
         "What is machine learning?",
         "Tell me more about the automation benefits",
         "Can you elaborate on that approach?"
     ]
-    
+
     for query in non_rag_cases:
         mock_response = {
             "search_rag": False,
@@ -1534,9 +1535,9 @@ def test_non_rag_queries_have_empty_filters():
             "llm_query": "test response"
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is False
         assert result['hard_filters'] == {}
         assert result['negation_filters'] == {}
@@ -1547,7 +1548,7 @@ def test_search_only_query_detection():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     search_only_queries = [
         "@knowledgebase search papers by John Wong",
         "@knowledgebase find documents from 2025",
@@ -1555,7 +1556,7 @@ def test_search_only_query_detection():
         "@knowledgebase show me articles about Python",
         "@knowledgebase retrieve documents tagged AI"
     ]
-    
+
     for query in search_only_queries:
         mock_response = {
             "search_rag": True,
@@ -1569,9 +1570,9 @@ def test_search_only_query_detection():
             "soft_filters": {"author": "test"}
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is True, f"Should trigger RAG for: {query}"
         # QueryRewriter now converts SEARCH_SUMMARY_MODE to the full prompt
         assert "If no context documents are provided" in result['llm_query'], f"Should have search summary prompt for: {query}"
@@ -1583,14 +1584,14 @@ def test_question_queries_not_search_only():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     question_queries = [
         "@knowledgebase what is vibe coding?",
         "@knowledgebase how does neural network training work?",
         "@knowledgebase explain neural networks",
         "@knowledgebase compare REST vs GraphQL"
     ]
-    
+
     for query in question_queries:
         mock_response = {
             "search_rag": True,
@@ -1604,9 +1605,9 @@ def test_question_queries_not_search_only():
             "llm_query": "Based on the provided context, explain the topic."
         }
         mock_llm.get_json_response.return_value = mock_response
-        
+
         result = rewriter.transform_query(query)
-        
+
         assert result['search_rag'] is True, f"Should trigger RAG for: {query}"
         # QueryRewriter now returns full prompts, not SEARCH_SUMMARY_MODE
         assert "If no context documents are provided" not in result['llm_query'], f"Should NOT be search summary for: {query}"
@@ -1619,14 +1620,14 @@ def test_build_final_llm_query_method():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Test SEARCH_SUMMARY_MODE conversion
     search_summary_prompt = rewriter._build_final_llm_query("SEARCH_SUMMARY_MODE")
     assert "If no context documents are provided" in search_summary_prompt
     assert "Document Summary" in search_summary_prompt
     assert "Key Topics" in search_summary_prompt
     assert "Question Suggestions" in search_summary_prompt
-    
+
     # Test regular prompt pass-through
     regular_prompt = "Based on the provided context, explain machine learning."
     result_prompt = rewriter._build_final_llm_query(regular_prompt)
@@ -1638,7 +1639,7 @@ def test_build_final_llm_query_method():
 def test_query_rewriter_debug_error_creation():
     """Test QueryRewriterDebugError exception class creation and attributes."""
     from query_rewriter import QueryRewriterDebugError
-    
+
     # Test with all parameters
     error = QueryRewriterDebugError(
         failure_type="validation_error",
@@ -1646,23 +1647,23 @@ def test_query_rewriter_debug_error_creation():
         raw_response='{"test": "response"}',
         parsed_data={"parsed": "data"}
     )
-    
+
     assert error.failure_type == "validation_error"
     assert str(error) == "Test error message"
     assert error.raw_response == '{"test": "response"}'
     assert error.parsed_data == {"parsed": "data"}
-    
+
     # Test with minimal parameters
     minimal_error = QueryRewriterDebugError(
         failure_type="llm_error",
         message="Minimal error"
     )
-    
+
     assert minimal_error.failure_type == "llm_error"
     assert str(minimal_error) == "Minimal error"
     assert minimal_error.raw_response is None
     assert minimal_error.parsed_data is None
-    
+
     # Test inheritance
     assert isinstance(error, Exception)
 
@@ -1672,7 +1673,7 @@ def test_transform_query_debug_mode_success():
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock successful JSON response
     mock_response = {
         'search_rag': True,
@@ -1686,18 +1687,18 @@ def test_transform_query_debug_mode_success():
         'soft_filters': {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     # Test with debug mode enabled - should work normally
     result = rewriter.transform_query('@knowledgebase test query', rethrow_on_error=True)
-    
+
     assert result['search_rag'] is True
     assert result['embedding_texts']['rewrite'] == 'test query'
     assert len(result['embedding_texts']['hyde']) == 3
     assert result['source'] == 'llm'
-    
+
     # Test with debug mode disabled (default) - should also work
     result_normal = rewriter.transform_query('@knowledgebase test query', rethrow_on_error=False)
-    
+
     assert result_normal['search_rag'] is True
     assert result_normal['source'] == 'llm'
 
@@ -1705,17 +1706,17 @@ def test_transform_query_debug_mode_success():
 def test_transform_query_debug_mode_llm_error():
     """Test transform_query with debug mode enabled - LLM error."""
     from query_rewriter import QueryRewriterDebugError
-    
+
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock LLM error with raw response
     llm_error = ValueError("Invalid JSON response from LLM")
     llm_error.raw_response = '{"invalid": json}'
     llm_error.cleaned_response = '{"invalid": json}'
     mock_llm.get_json_response.side_effect = llm_error
-    
+
     # Test with debug mode enabled - should raise QueryRewriterDebugError
     try:
         rewriter.transform_query('@knowledgebase test query', rethrow_on_error=True)
@@ -1726,10 +1727,10 @@ def test_transform_query_debug_mode_llm_error():
         assert error.raw_response == '{"invalid": json}'
         assert error.parsed_data is not None
         assert error.parsed_data["cleaned_response"] == '{"invalid": json}'
-    
+
     # Test with debug mode disabled - should return fallback
     result = rewriter.transform_query('@knowledgebase test query', rethrow_on_error=False)
-    
+
     assert result['source'] == 'fallback'
     assert result['search_rag'] is True
 
@@ -1737,11 +1738,11 @@ def test_transform_query_debug_mode_llm_error():
 def test_transform_query_debug_mode_validation_error():
     """Test transform_query with debug mode enabled - validation error."""
     from query_rewriter import QueryRewriterDebugError
-    
+
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock response missing required field
     mock_response = {
         'search_rag': True,
@@ -1755,7 +1756,7 @@ def test_transform_query_debug_mode_validation_error():
         'soft_filters': {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     # Test with debug mode enabled - should raise QueryRewriterDebugError
     try:
         rewriter.transform_query('@knowledgebase test query', rethrow_on_error=True)
@@ -1765,10 +1766,10 @@ def test_transform_query_debug_mode_validation_error():
         assert "Missing required field 'llm_query'" in str(error)
         assert error.raw_response == str(mock_response)
         assert error.parsed_data == mock_response
-    
+
     # Test with debug mode disabled - should return fallback
     result = rewriter.transform_query('@knowledgebase test query', rethrow_on_error=False)
-    
+
     assert result['source'] == 'fallback'
     assert result['search_rag'] is True
 
@@ -1776,11 +1777,11 @@ def test_transform_query_debug_mode_validation_error():
 def test_transform_query_debug_mode_empty_rewrite_validation():
     """Test transform_query debug mode with empty rewrite validation error."""
     from query_rewriter import QueryRewriterDebugError
-    
+
     mock_llm = create_mock_llm_client()
     config = {'trigger_phrase': '@knowledgebase'}
     rewriter = QueryRewriter(mock_llm, config)
-    
+
     # Mock response with empty rewrite field
     mock_response = {
         'search_rag': True,
@@ -1794,7 +1795,7 @@ def test_transform_query_debug_mode_empty_rewrite_validation():
         'soft_filters': {}
     }
     mock_llm.get_json_response.return_value = mock_response
-    
+
     # Test with debug mode enabled - should raise QueryRewriterDebugError
     try:
         rewriter.transform_query('@knowledgebase test query', rethrow_on_error=True)

@@ -1,13 +1,14 @@
 import os
 import sys
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from sparse_embedding_providers import create_sparse_embedding_provider
 from config import SparseEmbeddingConfig, SpladeConfig
+from sparse_embedding_providers import create_sparse_embedding_provider
 
 
 class TestSparseEmbeddingProviderFactory:

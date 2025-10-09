@@ -1,5 +1,6 @@
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
+
 from llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
@@ -18,25 +19,25 @@ class QueryRewriter:
     Analyzes queries to detect trigger phrases and transforms them into structured
     search queries and generation prompts.
     """
-    
+
     def __init__(self, llm_client: LLMClient, config: Dict[str, Any]):
         self.llm_client = llm_client
         self.config = config
         self.trigger_phrase = config.get('trigger_phrase', '@knowledgebase')
         self.retrieval_strategy = config.get('retrieval_strategy', 'rewrite')
-        
+
         # Query rewriter specific settings
         self.temperature = config.get('temperature', 0.1)  # Low temp for consistent JSON
         self.max_tokens = config.get('max_tokens', 4096)   # Large buffer for thinking models and complex JSON responses
-        
+
         self.system_prompt = self._build_system_prompt()
         logger.info(f"QueryRewriter initialized with strategy: {self.retrieval_strategy}")
-    
-    
+
+
     def _build_system_prompt(self) -> str:
         """Build the unified system prompt for query transformation."""
         return self._build_unified_system_prompt()
-    
+
 
     def _build_unified_system_prompt(self) -> str:
         """Build the unified system prompt for query transformation that returns both rewrite and hyde formats."""
@@ -188,7 +189,7 @@ Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "machine learnin
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": user_query}
             ]
-            
+
             # Get JSON response directly (handles parsing and markdown wrappers)
             logger.debug(f"Transforming query: {user_query}")
             result = self.llm_client.get_json_response(
@@ -196,33 +197,33 @@ Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "machine learnin
                 temperature=self.temperature,
                 max_tokens=self.max_tokens
             )
-            
+
             # Validate and return result
             validated_result = self._validate_result(result, user_query, rethrow_on_error)
-            
+
             # Convert structured llm_query to final, ready-to-use prompt
             validated_result['llm_query'] = self._build_final_llm_query(validated_result['llm_query'])
-            
-            
+
+
             # Add source indicator (only if not already set by fallback)
             if 'source' not in validated_result:
                 validated_result['source'] = 'llm'
-            
+
             logger.info(f"Query transformed successfully. RAG search: {validated_result['search_rag']}")
             return validated_result
-            
+
         except QueryRewriterDebugError:
             # Re-raise QueryRewriterDebugError unchanged (validation and other debug errors)
             raise
         except Exception as e:
             logger.error(f"Query transformation failed: {e}")
-            
+
             # If rethrow_on_error is True, raise the exception instead of fallback
             if rethrow_on_error:
                 # Extract raw response from exception if available
                 raw_response = getattr(e, 'raw_response', str(e))
                 cleaned_response = getattr(e, 'cleaned_response', None)
-                
+
                 # Create enhanced error with debugging information
                 enhanced_error = QueryRewriterDebugError(
                     failure_type="transform_error",
@@ -231,9 +232,9 @@ Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "machine learnin
                     parsed_data={"cleaned_response": cleaned_response} if cleaned_response else None
                 )
                 raise enhanced_error from e
-            
+
             return self._create_fallback_result(user_query)
-    
+
     def _build_final_llm_query(self, llm_prompt: str) -> str:
         """Convert structured llm_prompt to final, ready-to-use prompt."""
         if llm_prompt == "SEARCH_SUMMARY_MODE":
@@ -247,7 +248,7 @@ If context documents are provided, please:
 Format your response clearly with the sections above."""
         else:
             return llm_prompt  # Pass through regular prompts unchanged
-    
+
     def _validate_result(self, result: Dict[str, Any], original_query: str, rethrow_on_error: bool = False) -> Dict[str, Any]:
         """
         Validate and sanitize the transformation result.
@@ -273,7 +274,7 @@ Format your response clearly with the sections above."""
                         parsed_data=result
                     )
                 return self._create_fallback_result(original_query)
-        
+
         # Check for new embedding_texts structure
         if 'embedding_texts' not in result:
             logger.warning("Missing 'embedding_texts' field in transformation result")
@@ -285,7 +286,7 @@ Format your response clearly with the sections above."""
                     parsed_data=result
                 )
             return self._create_fallback_result(original_query)
-        
+
         # Ensure all filter fields exist
         if 'hard_filters' not in result:
             result['hard_filters'] = {}
@@ -293,7 +294,7 @@ Format your response clearly with the sections above."""
             result['negation_filters'] = {}
         if 'soft_filters' not in result:
             result['soft_filters'] = {}
-        
+
         # Validate search_rag is boolean
         if not isinstance(result['search_rag'], bool):
             logger.warning("search_rag field is not boolean, converting")
@@ -302,7 +303,7 @@ Format your response clearly with the sections above."""
                 result['search_rag'] = result['search_rag'].lower() in ('true', '1', 'yes')
             else:
                 result['search_rag'] = bool(result['search_rag'])
-        
+
         # Validate embedding_texts structure (only required for RAG queries)
         if result['search_rag']:
             embedding_texts = result.get('embedding_texts', {})
@@ -316,7 +317,7 @@ Format your response clearly with the sections above."""
                         parsed_data=result
                     )
                 return self._create_fallback_result(original_query)
-            
+
             # Validate rewrite text
             if 'rewrite' not in embedding_texts or not isinstance(embedding_texts['rewrite'], str) or not embedding_texts['rewrite'].strip():
                 logger.warning("embedding_texts.rewrite is required for RAG queries")
@@ -328,7 +329,7 @@ Format your response clearly with the sections above."""
                         parsed_data=result
                     )
                 return self._create_fallback_result(original_query)
-            
+
             # Validate and clean hyde texts array
             if 'hyde' not in embedding_texts or not isinstance(embedding_texts['hyde'], list):
                 logger.warning("embedding_texts.hyde must be an array")
@@ -340,7 +341,7 @@ Format your response clearly with the sections above."""
                         parsed_data=result
                     )
                 return self._create_fallback_result(original_query)
-            
+
             # Filter out empty/invalid hyde texts and keep only valid ones
             valid_hyde_texts = []
             for i, hyde_text in enumerate(embedding_texts['hyde']):
@@ -348,7 +349,7 @@ Format your response clearly with the sections above."""
                     valid_hyde_texts.append(hyde_text.strip())
                 else:
                     logger.debug(f"Filtering out empty/invalid hyde text at index {i}")
-            
+
             # Require at least one valid hyde text for RAG queries
             if len(valid_hyde_texts) == 0:
                 logger.warning("No valid hyde texts generated, falling back")
@@ -360,11 +361,11 @@ Format your response clearly with the sections above."""
                         parsed_data=result
                     )
                 return self._create_fallback_result(original_query)
-            
+
             # Update with cleaned hyde texts
             embedding_texts['hyde'] = valid_hyde_texts
             logger.debug(f"Using {len(valid_hyde_texts)} valid hyde texts out of {len(embedding_texts.get('hyde', []))}")
-        
+
         # Validate llm_query is not empty
         if not isinstance(result['llm_query'], str) or not result['llm_query'].strip():
             logger.warning("llm_query field is empty or invalid")
@@ -376,27 +377,27 @@ Format your response clearly with the sections above."""
                     parsed_data=result
                 )
             return self._create_fallback_result(original_query)
-        
+
         # Validate all filter fields are dictionaries
         filter_fields = ['hard_filters', 'negation_filters', 'soft_filters']
         for field in filter_fields:
             if not isinstance(result[field], dict):
                 logger.warning(f"{field} field is not a dictionary, resetting to empty dict")
                 result[field] = {}
-        
+
         # Double-check search_rag logic against actual trigger detection
         actual_has_trigger = self.trigger_phrase.lower() in original_query.lower()
         if result['search_rag'] != actual_has_trigger:
             logger.warning(f"LLM trigger detection mismatch. Expected: {actual_has_trigger}, Got: {result['search_rag']}")
             result['search_rag'] = actual_has_trigger
-        
+
         # Ensure strategy field is always present with configured value
         if 'strategy' not in result:
             logger.debug(f"Adding missing strategy field: {self.retrieval_strategy}")
             result['strategy'] = self.retrieval_strategy
-        
+
         return result
-    
+
     def _create_fallback_result(self, user_query: str) -> Dict[str, Any]:
         """
         Create fallback result when transformation fails.
@@ -409,13 +410,13 @@ Format your response clearly with the sections above."""
         """
         # Simple trigger detection
         has_trigger = self.trigger_phrase.lower() in user_query.lower()
-        
+
         # Clean query for embedding (remove trigger phrase)
         clean_query = user_query.replace(self.trigger_phrase, '').strip()
-        
+
         # Only trigger RAG if there's content after the trigger phrase
         search_rag = has_trigger and bool(clean_query)
-        
+
         fallback_result = {
             'search_rag': search_rag,
             'embedding_texts': {
@@ -429,10 +430,10 @@ Format your response clearly with the sections above."""
             'strategy': self.retrieval_strategy,  # Use configured strategy even in fallback
             'source': 'fallback'
         }
-        
+
         logger.info("Using fallback query transformation")
         return fallback_result
-    
+
     def test_connection(self) -> bool:
         """
         Test the query rewriter by transforming a simple test query.
@@ -442,16 +443,16 @@ Format your response clearly with the sections above."""
         """
         try:
             test_query = f"{self.trigger_phrase} What is artificial intelligence?"
-            
+
             # Test the complete transform_query process
             result = self.transform_query(test_query)
-            
+
             # Validate the final result has required fields including source
             expected_fields = ['search_rag', 'embedding_texts', 'llm_query', 'hard_filters', 'negation_filters', 'soft_filters', 'source']
             if all(field in result for field in expected_fields):
                 # Also check embedding_texts structure
                 embedding_texts = result.get('embedding_texts', {})
-                if ('rewrite' in embedding_texts and 'hyde' in embedding_texts and 
+                if ('rewrite' in embedding_texts and 'hyde' in embedding_texts and
                     isinstance(embedding_texts['hyde'], list) and len(embedding_texts['hyde']) >= 1 and
                     result['source'] == 'llm'):
                     logger.info("QueryRewriter connection test successful")
@@ -462,7 +463,7 @@ Format your response clearly with the sections above."""
             else:
                 logger.error("QueryRewriter test failed: missing required fields")
                 return False
-            
+
         except Exception as e:
             logger.error(f"QueryRewriter connection test failed: {e}")
             return False
