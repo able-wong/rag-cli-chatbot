@@ -2,7 +2,7 @@
 name = "rag-cli-chatbot"
 version = "1.0.0"
 description = "RAG-powered CLI chatbot with vector search and query rewriting"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 readme = "README.md"
 
 [tool.ruff]
@@ -22,7 +22,7 @@ exclude = [
 line-length = 120
 
 # Python version
-target-version = "py313"
+target-version = "py312"
 
 [tool.ruff.lint]
 # Enable pycodestyle (E), Pyflakes (F), and other common rules

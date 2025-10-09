@@ -215,9 +215,12 @@ class LLMClient:
                 return parsed_json
 
             except json.JSONDecodeError as e:
-                logger.error(
-                    f"Failed to parse JSON. Raw: '{raw_response[:200]}...', "
-                    f"Cleaned: '{cleaned_response[:200]}...', Error: {e}"
+                # Log error without sensitive data (only error type)
+                logger.error(f"Failed to parse JSON response: {e}")
+                # Log full details only at debug level (not in production logs)
+                logger.debug(
+                    f"JSON parse details - Raw length: {len(raw_response)}, "
+                    f"Cleaned length: {len(cleaned_response)}"
                 )
                 # Create enhanced error with raw response for debugging
                 json_error = ValueError(f"Invalid JSON response from LLM: {e}")
@@ -305,7 +308,7 @@ class LLMClient:
             match = re.search(pattern, text, re.DOTALL)
             if match:
                 extracted = match.group(1).strip()
-                logger.debug(f"Stripped markdown wrapper, extracted: '{extracted[:100]}...'")
+                logger.debug(f"Stripped markdown wrapper, extracted {len(extracted)} chars")
                 return extracted
 
         # If no markdown wrapper found, return original text
@@ -336,5 +339,5 @@ class LLMClient:
         # Remove any trailing commas at the very end
         text = text.rstrip(',').strip()
 
-        logger.debug(f"Cleaned JSON formatting: '{text[:100]}...'")
+        logger.debug(f"Cleaned JSON formatting, final length: {len(text)} chars")
         return text
