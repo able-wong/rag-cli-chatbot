@@ -1,9 +1,10 @@
-import logging
-import requests
 import json
+import logging
 import re
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 import google.generativeai as genai
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +14,7 @@ class LLMClient:
         self.provider = config.get('provider', 'ollama')
         self.conversation_history = []
         self._initialize_client()
-    
+
     def _initialize_client(self):
         """Initialize the LLM client based on provider."""
         try:
@@ -22,27 +23,27 @@ class LLMClient:
                 self.model = self.config.get('model', 'llama3.2')
                 self.timeout = self.config.get('timeout', 120)
                 logger.info(f"Initialized Ollama LLM client with model: {self.model}")
-                
+
             elif self.provider == 'gemini':
                 gemini_config = self.config.get('gemini', {})
                 api_key = gemini_config.get('api_key')
                 if not api_key:
                     raise ValueError("Gemini API key is required")
-                
+
                 genai.configure(api_key=api_key)
                 self.model = gemini_config.get('model', 'gemini-1.5-flash')
                 logger.info(f"Initialized Gemini LLM client with model: {self.model}")
-                
+
             else:
                 raise ValueError(f"Unsupported LLM provider: {self.provider}")
-                
+
         except Exception as e:
             logger.error(f"Failed to initialize LLM client: {e}")
             raise
-    
+
     def get_llm_response(
-        self, 
-        messages: List[Dict[str, str]], 
+        self,
+        messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None
     ) -> str:
@@ -54,24 +55,24 @@ class LLMClient:
                 return self._get_gemini_response(messages, temperature, max_tokens)
             else:
                 raise ValueError(f"Unsupported provider: {self.provider}")
-                
+
         except Exception as e:
             logger.error(f"Failed to generate LLM response: {e}")
             raise
-    
+
     def _get_ollama_response(
-        self, 
-        messages: List[Dict[str, str]], 
+        self,
+        messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None
     ) -> str:
         """Get response from Ollama."""
         url = f"{self.base_url}/api/chat"
-        
+
         # Use config defaults if not provided
         temp = temperature if temperature is not None else self.config.get('temperature', 0.7)
         max_tok = max_tokens if max_tokens is not None else self.config.get('max_tokens', 2048)
-        
+
         payload = {
             "model": self.model,
             "messages": messages,
@@ -83,31 +84,31 @@ class LLMClient:
                 "top_k": self.config.get('top_k', 40)
             }
         }
-        
+
         response = requests.post(
             url,
             json=payload,
             timeout=self.timeout
         )
         response.raise_for_status()
-        
+
         result = response.json()
         return result['message']['content']
-    
+
     def _get_gemini_response(
-        self, 
-        messages: List[Dict[str, str]], 
+        self,
+        messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None
     ) -> str:
         """Get response from Gemini."""
         # Convert messages to Gemini format
         gemini_messages = []
-        
+
         for msg in messages:
             role = msg['role']
             content = msg['content']
-            
+
             # Map roles
             if role == 'system':
                 # Gemini doesn't have system role, prepend to first user message
@@ -128,71 +129,71 @@ class LLMClient:
                     'role': 'model',
                     'parts': [{'text': content}]
                 })
-        
+
         # Use config defaults if not provided
         temp = temperature if temperature is not None else self.config.get('temperature', 0.7)
         max_tok = max_tokens if max_tokens is not None else self.config.get('max_tokens', 2048)
-        
+
         model = genai.GenerativeModel(self.model)
-        
+
         generation_config = genai.GenerationConfig(
             temperature=temp,
             max_output_tokens=max_tok,
             top_p=self.config.get('top_p', 0.9),
             top_k=self.config.get('top_k', 40)
         )
-        
+
         # Start chat with history (excluding the last message which will be sent)
         chat = model.start_chat(history=gemini_messages[:-1])
-        
+
         # Send the last message
         response = chat.send_message(
             gemini_messages[-1]['parts'][0]['text'],
             generation_config=generation_config
         )
-        
+
         return response.text
-    
+
     def test_connection(self) -> bool:
         """Test connection to the LLM service."""
         try:
             test_messages = [{"role": "user", "content": "Hello"}]
             response = self.get_llm_response(test_messages)
-            
+
             if response and len(response.strip()) > 0:
                 logger.info("Successfully connected to LLM service")
                 return True
             else:
                 logger.error("LLM returned empty response")
                 return False
-                
+
         except Exception as e:
             logger.error(f"Failed to connect to LLM service: {e}")
             return False
-    
+
     def get_json_response(
-        self, 
-        messages: List[Dict[str, str]], 
+        self,
+        messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Get JSON response from LLM, handling markdown wrappers automatically.
-        
+
         This method:
         1. Gets raw text response from LLM
         2. Strips markdown code block wrappers (```json ... ```)
         3. Parses JSON and returns dictionary
         4. Provides clear error messages for debugging
-        
+
         Args:
             messages: List of message dictionaries for the LLM
             temperature: Optional temperature override
             max_tokens: Optional max tokens override
-            
+
         Returns:
             Parsed JSON response as dictionary
-            
+
         Raises:
             ValueError: If response is not valid JSON
             Exception: If LLM call fails
@@ -200,91 +201,100 @@ class LLMClient:
         try:
             # Get raw text response from LLM
             raw_response = self.get_llm_response(messages, temperature, max_tokens)
-            
+
             if not raw_response or not raw_response.strip():
                 raise ValueError("LLM returned empty response")
-            
+
             # Strip thinking blocks and markdown wrappers if present
             cleaned_response = self._extract_json_from_response(raw_response.strip())
-            
+
             # Parse JSON
             try:
                 parsed_json = json.loads(cleaned_response)
                 logger.debug(f"Successfully parsed JSON response: {type(parsed_json)}")
                 return parsed_json
-                
+
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON response. Raw: '{raw_response[:200]}...', Cleaned: '{cleaned_response[:200]}...', Error: {e}")
+                # Log error without sensitive data (only error type)
+                logger.error(f"Failed to parse JSON response: {e}")
+                # Log full details only at debug level (not in production logs)
+                logger.debug(
+                    f"JSON parse details - Raw length: {len(raw_response)}, "
+                    f"Cleaned length: {len(cleaned_response)}"
+                )
                 # Create enhanced error with raw response for debugging
                 json_error = ValueError(f"Invalid JSON response from LLM: {e}")
                 json_error.raw_response = raw_response
                 json_error.cleaned_response = cleaned_response
                 raise json_error
-                
+
         except Exception as e:
             logger.error(f"Failed to get JSON response from LLM: {e}")
             raise
-    
+
     def _extract_json_from_response(self, text: str) -> str:
         """
         Extract JSON from LLM response, handling thinking blocks and markdown wrappers.
-        
+
         This method handles:
         1. Thinking models with <think>...</think> blocks
         2. Markdown code block wrappers (```json ... ```)
         3. Raw JSON without wrappers
         4. Multiple extraction strategies for robustness
-        
+
         Args:
             text: Raw text from LLM that may contain thinking blocks and/or markdown
-            
+
         Returns:
             Cleaned JSON text ready for parsing
         """
         # First, remove thinking blocks if present
         text_without_thinking = self._strip_thinking_blocks(text)
-        
+
         # Then try to extract JSON from the remaining content
-        return self._strip_markdown_json_wrapper(text_without_thinking)
-    
+        json_text = self._strip_markdown_json_wrapper(text_without_thinking)
+
+        # Finally, clean up common JSON formatting issues
+        return self._cleanup_json_formatting(json_text)
+
     def _strip_thinking_blocks(self, text: str) -> str:
         """
         Remove <think>...</think> blocks from text, preserving other content.
-        
+
         Args:
             text: Text that may contain thinking blocks
-            
+
         Returns:
             Text with thinking blocks removed
         """
         # Remove thinking blocks (case insensitive, multiline)
         pattern = r'<think>.*?</think>'
         cleaned = re.sub(pattern, '', text, flags=re.DOTALL | re.IGNORECASE)
-        
+
         # Clean up extra whitespace
         cleaned = re.sub(r'\n\s*\n', '\n', cleaned.strip())
-        
+
         return cleaned
-    
+
     def _strip_markdown_json_wrapper(self, text: str) -> str:
         """
         Strip markdown JSON code block wrappers from text.
-        
+
         Handles these patterns:
         - ```json\n{...}\n```
         - ```\n{...}\n```
         - ````json\n{...}\n````
         - Raw JSON without wrappers
-        
+
         Args:
             text: Raw text that may contain markdown wrappers
-            
+
         Returns:
             Cleaned text with wrappers removed
         """
         # Remove leading/trailing whitespace
         text = text.strip()
-        
+
         # Pattern to match markdown code blocks with optional json specifier
         # Matches: ```json or ``` or ````json or ````
         # Captures the content between the backticks
@@ -293,14 +303,41 @@ class LLMClient:
             r'````(?:json)?\s*\n(.*?)\n````',  # Quad backticks (rare but possible)
             r'```(?:json)?\s*(.*?)```',  # Single line variant
         ]
-        
+
         for pattern in patterns:
             match = re.search(pattern, text, re.DOTALL)
             if match:
                 extracted = match.group(1).strip()
-                logger.debug(f"Stripped markdown wrapper, extracted: '{extracted[:100]}...'")
+                logger.debug(f"Stripped markdown wrapper, extracted {len(extracted)} chars")
                 return extracted
-        
+
         # If no markdown wrapper found, return original text
         logger.debug("No markdown wrapper detected, using raw text")
+        return text
+
+    def _cleanup_json_formatting(self, text: str) -> str:
+        """
+        Clean up common JSON formatting issues that LLMs often produce.
+
+        This handles:
+        1. Trailing commas at the end of JSON objects
+        2. Extra whitespace around braces
+
+        Args:
+            text: JSON text that may have formatting issues
+
+        Returns:
+            Cleaned JSON text
+        """
+        # Remove leading/trailing whitespace
+        text = text.strip()
+
+        # Remove trailing commas before closing braces/brackets
+        # This handles cases like: {"key": "value",} -> {"key": "value"}
+        text = re.sub(r',(\s*[}\]])', r'\1', text)
+
+        # Remove any trailing commas at the very end
+        text = text.rstrip(',').strip()
+
+        logger.debug(f"Cleaned JSON formatting, final length: {len(text)} chars")
         return text

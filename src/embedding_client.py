@@ -1,11 +1,12 @@
+import contextlib
 import logging
-import requests
-import warnings
 import os
 import sys
-import contextlib
-from typing import List, Dict, Any, Optional
+import warnings
+from typing import Any, Dict, List, Optional
+
 import google.generativeai as genai
+import requests
 from sentence_transformers import SentenceTransformer
 
 # Suppress sentence-transformers and transformers warnings and progress bars
@@ -36,40 +37,40 @@ class EmbeddingClient:
         self.config = config
         self.provider = config.get('provider', 'ollama')
         self.client = None
-        
+
         # Initialize sparse embedding if configuration is provided
         self.sparse_provider = None
         if sparse_config:
             self._initialize_sparse_provider(sparse_config)
-        
+
         self._initialize_client()
-    
+
     def _initialize_sparse_provider(self, sparse_config: Dict[str, Any]):
         """Initialize the sparse embedding provider if configured."""
         try:
             from config import SparseEmbeddingConfig, SpladeConfig
             from sparse_embedding_providers import create_sparse_embedding_provider
-            
+
             # Convert dict config to dataclass
             splade_config = None
             if splade_dict := sparse_config.get('splade'):
                 splade_config = SpladeConfig(**splade_dict)
-            
+
             config_obj = SparseEmbeddingConfig(
                 provider=sparse_config.get('provider', 'splade'),
                 splade=splade_config
             )
-            
+
             self.sparse_provider = create_sparse_embedding_provider(config_obj)
             logger.info(f"Initialized sparse embedding provider: {config_obj.provider}")
-            
+
         except ImportError as e:
             logger.warning(f"Sparse embedding dependencies not available: {e}")
             self.sparse_provider = None
         except Exception as e:
             logger.error(f"Failed to initialize sparse embedding provider: {e}")
             self.sparse_provider = None
-    
+
     def _initialize_client(self):
         """Initialize the embedding client based on provider."""
         try:
@@ -78,34 +79,34 @@ class EmbeddingClient:
                 self.model = self.config.get('model', 'nomic-embed-text')
                 self.timeout = self.config.get('timeout', 60)
                 logger.info(f"Initialized Ollama embedding client with model: {self.model}")
-                
+
             elif self.provider == 'gemini':
                 gemini_config = self.config.get('gemini', {})
                 api_key = gemini_config.get('api_key')
                 if not api_key:
                     raise ValueError("Gemini API key is required")
-                
+
                 genai.configure(api_key=api_key)
                 self.model = gemini_config.get('model', 'text-embedding-004')
                 logger.info(f"Initialized Gemini embedding client with model: {self.model}")
-                
+
             elif self.provider == 'sentence_transformers':
                 st_config = self.config.get('sentence_transformers', {})
                 model_name = st_config.get('model', 'all-MiniLM-L6-v2')
                 device = st_config.get('device', 'cpu')
-                
+
                 # Initialize SentenceTransformer with suppressed output
                 with suppress_stdout_stderr():
                     self.client = SentenceTransformer(model_name, device=device)
                 logger.info(f"Initialized SentenceTransformers client with model: {model_name} on {device}")
-                
+
             else:
                 raise ValueError(f"Unsupported embedding provider: {self.provider}")
-                
+
         except Exception as e:
             logger.error(f"Failed to initialize embedding client: {e}")
             raise
-    
+
     def get_embedding(self, text: str) -> List[float]:
         """Generate embedding for the given text."""
         try:
@@ -117,30 +118,30 @@ class EmbeddingClient:
                 return self._get_sentence_transformers_embedding(text)
             else:
                 raise ValueError(f"Unsupported provider: {self.provider}")
-                
+
         except Exception as e:
             logger.error(f"Failed to generate embedding: {e}")
             raise
-    
+
     def _get_ollama_embedding(self, text: str) -> List[float]:
         """Get embedding from Ollama."""
         url = f"{self.base_url}/api/embeddings"
-        
+
         payload = {
             "model": self.model,
             "prompt": text
         }
-        
+
         response = requests.post(
             url,
             json=payload,
             timeout=self.timeout
         )
         response.raise_for_status()
-        
+
         result = response.json()
         return result['embedding']
-    
+
     def _get_gemini_embedding(self, text: str) -> List[float]:
         """Get embedding from Gemini."""
         result = genai.embed_content(
@@ -149,14 +150,14 @@ class EmbeddingClient:
             task_type="retrieval_query"
         )
         return result['embedding']
-    
+
     def _get_sentence_transformers_embedding(self, text: str) -> List[float]:
         """Get embedding from SentenceTransformers."""
         # Suppress progress bars and warnings during encoding
         with suppress_stdout_stderr():
             embedding = self.client.encode(text, convert_to_tensor=False)
         return embedding.tolist()
-    
+
     def get_embedding_dimension(self) -> int:
         """Get the dimension of embeddings for this model."""
         try:
@@ -178,52 +179,52 @@ class EmbeddingClient:
                     return 384
                 elif 'all-mpnet-base-v2' in self.config.get('sentence_transformers', {}).get('model', ''):
                     return 768
-            
+
             # Default fallback
             return 768
-    
+
     def get_sparse_embedding(self, text: str) -> Optional[Dict[str, Any]]:
         """Generate sparse embedding for the given text."""
         if not self.sparse_provider:
             return None
-        
+
         try:
             return self.sparse_provider.generate_sparse_embedding(text)
         except Exception as e:
             logger.error(f"Failed to generate sparse embedding: {e}")
             return None
-    
+
     def get_sparse_embeddings(self, texts: List[str]) -> Optional[List[Dict[str, Any]]]:
         """Generate sparse embeddings for multiple texts."""
         if not self.sparse_provider:
             return None
-        
+
         try:
             return self.sparse_provider.generate_sparse_embeddings(texts)
         except Exception as e:
             logger.error(f"Failed to generate sparse embeddings: {e}")
             return None
-    
+
     def has_sparse_embedding(self) -> bool:
         """Check if sparse embedding is available."""
         return self.sparse_provider is not None
-    
+
     def test_sparse_connection(self) -> bool:
         """Test if sparse embedding provider is working."""
         if not self.sparse_provider:
             return False
-        
+
         try:
             return self.sparse_provider.test_connection()
         except Exception as e:
             logger.error(f"Sparse embedding connection test failed: {e}")
             return False
-    
+
     def get_sparse_info(self) -> Optional[Dict[str, Any]]:
         """Get information about the sparse embedding provider."""
         if not self.sparse_provider:
             return None
-        
+
         try:
             return self.sparse_provider.get_info()
         except Exception as e:

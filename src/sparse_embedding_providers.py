@@ -1,6 +1,7 @@
-from abc import ABC, abstractmethod
-from typing import List, Dict, Any
 import logging
+from abc import ABC, abstractmethod
+from typing import Any, Dict, List
+
 from config import SparseEmbeddingConfig
 
 
@@ -49,8 +50,8 @@ class SpladeProvider(SparseEmbeddingProvider):
     def _initialize_model(self):
         """Initialize the SPLADE model and tokenizer."""
         try:
-            from transformers import AutoTokenizer, AutoModelForMaskedLM
             import torch
+            from transformers import AutoModelForMaskedLM, AutoTokenizer
 
             if not self.config.splade:
                 raise ValueError("SPLADE configuration is required")

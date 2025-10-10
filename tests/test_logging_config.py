@@ -4,18 +4,18 @@ Unit tests for logging configuration functionality.
 Tests the logging_config module with various configurations.
 """
 
-from unittest.mock import Mock, patch
 import logging
 import logging.handlers
-import sys
 import os
-import tempfile
 import shutil
+import sys
+import tempfile
+from unittest.mock import Mock, patch
 
 # Add src directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
-from logging_config import setup_logging, _parse_file_size, _create_log_handler
+from logging_config import _create_log_handler, _parse_file_size, setup_logging
 
 
 class TestFileSizeParsing:
@@ -99,7 +99,7 @@ class TestLogHandlerCreation:
         """Test creation of rotating file handler."""
         mock_dirname.return_value = 'logs'
         mock_exists.return_value = False
-        
+
         config = {
             'output': 'file',
             'file': {
@@ -108,12 +108,12 @@ class TestLogHandlerCreation:
                 'backup_count': 3
             }
         }
-        
+
         handler = _create_log_handler(config)
-        
+
         # Should create directory if it doesn't exist
         mock_makedirs.assert_called_once_with('logs', exist_ok=True)
-        
+
         # Should be a RotatingFileHandler
         assert isinstance(handler, logging.handlers.RotatingFileHandler)
         assert handler.maxBytes == 5 * 1024 * 1024
@@ -126,13 +126,13 @@ class TestLogHandlerCreation:
         """Test file handler creation with default values."""
         mock_dirname.return_value = 'logs'
         mock_exists.return_value = True  # Directory exists
-        
+
         config = {'output': 'file'}
         handler = _create_log_handler(config)
-        
+
         # Should not create directory if it exists
         mock_makedirs.assert_not_called()
-        
+
         # Should use defaults
         assert isinstance(handler, logging.handlers.RotatingFileHandler)
         assert handler.maxBytes == 10 * 1024 * 1024  # Default 10MB
@@ -165,13 +165,13 @@ class TestLoggingSetup:
             'output': 'stderr',
             'format': '%(levelname)s: %(message)s'
         }
-        
+
         setup_logging(config)
-        
+
         root_logger = logging.getLogger()
         assert root_logger.level == logging.DEBUG
         assert len(root_logger.handlers) == 1
-        
+
         handler = root_logger.handlers[0]
         assert isinstance(handler, logging.StreamHandler)
         assert handler.level == logging.DEBUG
@@ -179,11 +179,11 @@ class TestLoggingSetup:
     def test_default_configuration(self):
         """Test setup with no configuration (should use defaults)."""
         setup_logging()
-        
+
         root_logger = logging.getLogger()
         assert root_logger.level == logging.INFO
         assert len(root_logger.handlers) == 1
-        
+
         handler = root_logger.handlers[0]
         assert isinstance(handler, logging.StreamHandler)
         assert handler.stream == sys.stderr
@@ -192,7 +192,7 @@ class TestLoggingSetup:
         """Test handling of invalid log levels."""
         config = {'level': 'INVALID_LEVEL'}
         setup_logging(config)
-        
+
         root_logger = logging.getLogger()
         assert root_logger.level == logging.INFO  # Should default to INFO
 
@@ -201,9 +201,9 @@ class TestLoggingSetup:
         # Add a dummy handler first
         dummy_handler = logging.StreamHandler()
         logging.getLogger().addHandler(dummy_handler)
-        
+
         setup_logging({'output': 'stderr'})
-        
+
         # Should have exactly one handler after setup
         assert len(logging.getLogger().handlers) == 1
         # Should not be the dummy handler
@@ -215,18 +215,18 @@ class TestLoggingSetup:
             'format': 'CUSTOM: %(message)s',
             'date_format': '%H:%M:%S'
         }
-        
+
         setup_logging(config)
-        
+
         handler = logging.getLogger().handlers[0]
         formatter = handler.formatter
-        
+
         # Test the formatter by formatting a dummy record
         record = logging.LogRecord(
             name='test', level=logging.INFO, pathname='', lineno=0,
             msg='test message', args=(), exc_info=None
         )
-        
+
         formatted = formatter.format(record)
         assert formatted.startswith('CUSTOM: test message')
 
@@ -235,7 +235,7 @@ class TestLoggingSetup:
         """Test configuration of specific loggers."""
         mock_handler = Mock()
         mock_create_handler.return_value = mock_handler
-        
+
         config = {
             'level': 'INFO',
             'loggers': {
@@ -243,13 +243,13 @@ class TestLoggingSetup:
                 'another.logger': {'level': 'WARNING'}
             }
         }
-        
+
         setup_logging(config)
-        
+
         # Check specific logger levels
         test_logger = logging.getLogger('test.logger')
         another_logger = logging.getLogger('another.logger')
-        
+
         assert test_logger.level == logging.DEBUG
         assert another_logger.level == logging.WARNING
 
@@ -265,7 +265,7 @@ class TestLoggingIntegration:
     def teardown_method(self):
         """Clean up test fixtures."""
         shutil.rmtree(self.temp_dir, ignore_errors=True)
-        
+
         # Clear root logger handlers
         root_logger = logging.getLogger()
         for handler in root_logger.handlers[:]:
@@ -283,23 +283,23 @@ class TestLoggingIntegration:
             },
             'format': '%(levelname)s: %(message)s'
         }
-        
+
         setup_logging(config)
-        
+
         # Log some messages
         logger = logging.getLogger('test')
         logger.info('Test message 1')
         logger.warning('Test message 2')
         logger.error('Test message 3')
-        
+
         # Force handler flush
         for handler in logging.getLogger().handlers:
             if hasattr(handler, 'flush'):
                 handler.flush()
-        
+
         # Check that log file was created and contains messages
         assert os.path.exists(self.log_file)
-        
+
         with open(self.log_file, 'r') as f:
             content = f.read()
             assert 'INFO: Test message 1' in content
@@ -313,18 +313,18 @@ class TestLoggingIntegration:
             'output': 'console',
             'format': '%(levelname)s: %(message)s'
         }
-        
+
         with patch('sys.stdout') as mock_stdout:
             setup_logging(config)
-            
+
             logger = logging.getLogger('test')
             logger.info('Test console message')
-            
+
             # Force handler flush
             for handler in logging.getLogger().handlers:
                 if hasattr(handler, 'flush'):
                     handler.flush()
-            
+
             # Check that stdout was used
             assert mock_stdout.write.called
 
@@ -332,14 +332,14 @@ class TestLoggingIntegration:
         """Test that null handler properly discards messages."""
         config = {'output': 'none'}
         setup_logging(config)
-        
+
         logger = logging.getLogger('test')
-        
+
         # This should not raise any exceptions or produce output
         logger.debug('This message should be discarded')
         logger.info('This message should also be discarded')
         logger.error('Even errors should be discarded')
-        
+
         # Verify null handler is in use
         root_logger = logging.getLogger()
         assert len(root_logger.handlers) == 1
