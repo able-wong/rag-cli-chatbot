@@ -15,6 +15,7 @@ from logging_config import setup_logging
 from qdrant_db import QdrantDB
 from query_rewriter import QueryRewriter
 from search_service import SearchService
+from tools import ToolManager
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class RAGCLI:
         self.llm_client = None
         self.query_rewriter = None
         self.search_service = None
+        self.tool_manager = None
         self.conversation_history = []
         self.last_rag_results = []
 
@@ -110,6 +112,29 @@ class RAGCLI:
                 config=search_service_config
             )
             logger.info("SearchService initialized with self-contained providers")
+
+            # Initialize ToolManager if tools are enabled
+            tools_config = self.config_manager.get('tools', {})
+            if tools_config.get('enabled', False):
+                try:
+                    self.tool_manager = ToolManager(tools_config, self.llm_client.provider)
+                    self.tool_manager.initialize()
+
+                    # Validate tool support
+                    if not self.llm_client.test_tool_support():
+                        raise RuntimeError(
+                            f"Tools are enabled but {self.llm_client.provider} model "
+                            f"'{self.llm_client.model}' does not support tool calling. "
+                            f"Please use a tool-capable model or disable tools in config."
+                        )
+
+                    logger.info("ToolManager initialized and validated")
+                except Exception as e:
+                    logger.error(f"Failed to initialize tools: {e}")
+                    raise
+            else:
+                self.tool_manager = None
+                logger.info("Tools disabled in configuration")
 
         except Exception as e:
             logger.error(f"Failed to initialize clients: {e}")
@@ -374,6 +399,21 @@ class RAGCLI:
         # Documents Info
         doc_root = self.config_manager.get('documents.root_path', 'N/A')
         table.add_row("Documents", "Root Path", doc_root)
+
+        # Tools Info
+        tools_enabled = self.config_manager.get('tools.enabled', False)
+        table.add_row("Tools", "Enabled", str(tools_enabled))
+        if tools_enabled and self.tool_manager:
+            tool_names = self.tool_manager.registry.get_tool_names()
+            if tool_names:
+                # Show first few tools, truncate if too many
+                tools_display = ", ".join(tool_names[:5])
+                if len(tool_names) > 5:
+                    tools_display += f" (+{len(tool_names) - 5} more)"
+                table.add_row("", "Loaded", tools_display)
+                table.add_row("", "Count", str(len(tool_names)))
+            else:
+                table.add_row("", "Loaded", "None")
 
         panel = Panel(
             table,
@@ -900,13 +940,73 @@ Is there anything else I can help you with, or would you like to rephrase your q
                 # Add user message to history
                 self.conversation_history.append({"role": "user", "content": prompt})
 
-                # Get LLM response with timing
+                # Get LLM response with timing and tool support
                 llm_prompt_display = self._simplify_prompt_for_display(prompt)
                 self.console.print(f"🤖 [dim]Thinking with LLM prompt '{llm_prompt_display}'...[/dim]")
 
                 llm_start_time = time.time()
                 try:
-                    response = self.llm_client.get_llm_response(self.conversation_history)
+                    # Get tools for LLM if tool manager is available
+                    tools = self.tool_manager.get_tools_for_llm() if self.tool_manager else None
+
+                    # Initial LLM call
+                    response = self.llm_client.get_llm_response(self.conversation_history, tools=tools)
+
+                    # Iterative tool calling loop (support multiple rounds)
+                    max_tool_iterations = 5  # Prevent infinite loops
+                    iteration = 0
+
+                    while isinstance(response, dict) and "tool_calls" in response and iteration < max_tool_iterations:
+                        iteration += 1
+                        tool_calls = response["tool_calls"]
+
+                        # Display tool calls
+                        self.console.print("\n🔧 [yellow]Calling tools:[/yellow]")
+                        for tc in tool_calls:
+                            func_name = tc["function"]["name"]
+                            func_args = tc["function"].get("arguments", {})
+                            args_display = ", ".join(f"{k}={v}" for k, v in func_args.items()) if func_args else ""
+                            self.console.print(f"  • {func_name}({args_display})")
+
+                        # Execute tools
+                        tool_results = self.tool_manager.execute_tool_calls(tool_calls)
+
+                        # Display results
+                        for i, result in enumerate(tool_results):
+                            func_name = tool_calls[i]["function"]["name"]
+                            if result["success"]:
+                                self.console.print(f"  ✓ [green]{func_name}: {result['result']}[/green]")
+                            else:
+                                self.console.print(f"  ✗ [red]{func_name}: Error - {result['error']}[/red]")
+
+                        # Build tool result messages for LLM
+                        # Add the assistant's tool call message
+                        self.conversation_history.append({
+                            "role": "assistant",
+                            "content": response.get("text", "")
+                        })
+
+                        # Add tool results as user messages
+                        for i, result in enumerate(tool_results):
+                            tool_result_text = f"Tool {tool_calls[i]['function']['name']} returned: {result.get('result', result.get('error', 'Unknown error'))}"
+                            self.conversation_history.append({
+                                "role": "user",
+                                "content": tool_result_text
+                            })
+
+                        # Get next response from LLM (may call more tools or give final answer)
+                        self.console.print("\n🤖 [dim]Getting response from LLM...[/dim]")
+                        response = self.llm_client.get_llm_response(self.conversation_history, tools=tools)
+
+                    # Extract final text response
+                    if isinstance(response, dict):
+                        response = response.get("text", "")
+
+                    # Check if we hit max iterations
+                    if iteration >= max_tool_iterations:
+                        logger.warning(f"Hit max tool iterations ({max_tool_iterations})")
+                        self.console.print(f"\n⚠️  [yellow]Stopped after {max_tool_iterations} tool call rounds[/yellow]")
+
                     llm_elapsed = time.time() - llm_start_time
 
                     # Display response with timing

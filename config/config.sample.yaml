@@ -244,6 +244,24 @@ cli:
   max_history_length: 20               # Maximum conversation turns to keep
 
 # ============================================================================
+# TOOLS CONFIGURATION
+# ============================================================================
+tools:
+  # ENABLE/DISABLE TOOL CALLING
+  enabled: true                        # Enable tool calling feature
+
+  # TOOL DISCOVERY
+  directory: "./tools"                   # Directory to load tools from
+
+  # TOOL-SPECIFIC CONFIGURATION (Optional)
+  # Configure Valves for individual tools
+  valves:
+    gettime: {}                          # No config needed for gettime
+    city_timezone: {}                    # No config needed for city timezone
+    # web_search:
+    #   api_key: "your-api-key"         # Example: API key for web search tool
+
+# ============================================================================
 # LOGGING CONFIGURATION
 # ============================================================================
 logging:
