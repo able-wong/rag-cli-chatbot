@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import google.generativeai as genai
 import requests
@@ -45,27 +45,43 @@ class LLMClient:
         self,
         messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
-    ) -> str:
-        """Generate response from the LLM."""
+        max_tokens: Optional[int] = None,
+        tools: Optional[List[Any]] = None
+    ) -> Union[str, Dict[str, Any]]:
+        """
+        Generate response from the LLM.
+
+        Args:
+            messages: List of message dictionaries
+            temperature: Optional temperature override
+            max_tokens: Optional max tokens override
+            tools: Optional list of tool schemas (provider-specific format)
+
+        Returns:
+            str: Normal text response (when no tools called)
+            Dict: {"text": str, "tool_calls": list} when tools called
+        """
         try:
             if self.provider == 'ollama':
-                return self._get_ollama_response(messages, temperature, max_tokens)
+                return self._get_ollama_response(messages, temperature, max_tokens, tools)
             elif self.provider == 'gemini':
-                return self._get_gemini_response(messages, temperature, max_tokens)
+                return self._get_gemini_response(messages, temperature, max_tokens, tools)
             else:
                 raise ValueError(f"Unsupported provider: {self.provider}")
 
         except Exception as e:
+            import traceback
             logger.error(f"Failed to generate LLM response: {e}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
             raise
 
     def _get_ollama_response(
         self,
         messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
-    ) -> str:
+        max_tokens: Optional[int] = None,
+        tools: Optional[List[Any]] = None
+    ) -> Union[str, Dict[str, Any]]:
         """Get response from Ollama."""
         url = f"{self.base_url}/api/chat"
 
@@ -85,6 +101,10 @@ class LLMClient:
             }
         }
 
+        # Add tools if provided
+        if tools:
+            payload["tools"] = tools
+
         response = requests.post(
             url,
             json=payload,
@@ -93,21 +113,35 @@ class LLMClient:
         response.raise_for_status()
 
         result = response.json()
-        return result['message']['content']
+        message = result.get('message', {})
+
+        # Check for tool calls
+        tool_calls = message.get('tool_calls')
+        if tool_calls:
+            logger.debug(f"Ollama requested {len(tool_calls)} tool calls")
+            return {
+                "text": message.get('content', ''),
+                "tool_calls": tool_calls
+            }
+
+        # Normal text response
+        return message.get('content', '')
 
     def _get_gemini_response(
         self,
         messages: List[Dict[str, str]],
         temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None
-    ) -> str:
+        max_tokens: Optional[int] = None,
+        tools: Optional[List[Any]] = None
+    ) -> Union[str, Dict[str, Any]]:
         """Get response from Gemini."""
         # Convert messages to Gemini format
+        # NOTE: Converts OpenAI-compatible message format to Gemini's format
         gemini_messages = []
 
         for msg in messages:
             role = msg['role']
-            content = msg['content']
+            content = msg.get('content', '')
 
             # Map roles
             if role == 'system':
@@ -125,16 +159,94 @@ class LLMClient:
                     'parts': [{'text': content}]
                 })
             elif role == 'assistant':
+                # Handle assistant messages (may include tool_calls)
+                # NOTE: Gemini requires either text OR functionCall, not both in same message
+                if msg.get('tool_calls'):
+                    # For tool calls, create parts with functionCall only
+                    parts = []
+                    for tc in msg['tool_calls']:
+                        # Use genai.protos for proper formatting
+                        parts.append(
+                            genai.protos.Part(
+                                function_call=genai.protos.FunctionCall(
+                                    name=tc['function']['name'],
+                                    args=tc['function'].get('arguments', {})
+                                )
+                            )
+                        )
+                    gemini_messages.append({
+                        'role': 'model',
+                        'parts': parts
+                    })
+                else:
+                    # Regular text message
+                    parts = []
+                    if content:
+                        parts.append({'text': content})
+                    gemini_messages.append({
+                        'role': 'model',
+                        'parts': parts if parts else [{'text': ''}]
+                    })
+            elif role == 'tool':
+                # Convert OpenAI 'tool' role to Gemini 'functionResponse' format
+                # Use genai.protos for proper formatting
                 gemini_messages.append({
-                    'role': 'model',
-                    'parts': [{'text': content}]
+                    'role': 'user',
+                    'parts': [
+                        genai.protos.Part(
+                            function_response=genai.protos.FunctionResponse(
+                                name=msg.get('name', ''),
+                                response={'result': content}
+                            )
+                        )
+                    ]
                 })
 
         # Use config defaults if not provided
         temp = temperature if temperature is not None else self.config.get('temperature', 0.7)
         max_tok = max_tokens if max_tokens is not None else self.config.get('max_tokens', 2048)
 
-        model = genai.GenerativeModel(self.model)
+        # DEBUG: Log what we're sending to Gemini
+        logger.debug("=" * 80)
+        logger.debug("GEMINI REQUEST DEBUG")
+        logger.debug("=" * 80)
+        logger.debug(f"Messages being sent ({len(gemini_messages)} messages):")
+        for i, msg in enumerate(gemini_messages):
+            logger.debug(f"  Message {i+1}: role={msg['role']}")
+            # Safely log content based on part type
+            part = msg['parts'][0]
+            # Handle both dict and genai.protos.Part objects
+            if isinstance(part, dict):
+                if 'text' in part:
+                    logger.debug(f"    content: {part['text'][:200]}...")
+                elif 'functionCall' in part:
+                    logger.debug(f"    functionCall: {part['functionCall']['name']}")
+                elif 'functionResponse' in part:
+                    logger.debug(f"    functionResponse: {part['functionResponse']['name']}")
+            else:
+                # genai.protos.Part object
+                if hasattr(part, 'text') and part.text:
+                    logger.debug(f"    content: {part.text[:200]}...")
+                elif hasattr(part, 'function_call') and part.function_call:
+                    logger.debug(f"    functionCall: {part.function_call.name}")
+                elif hasattr(part, 'function_response') and part.function_response:
+                    logger.debug(f"    functionResponse: {part.function_response.name}")
+        logger.debug(f"\nTools provided: {len(tools) if tools else 0}")
+        if tools:
+            logger.debug(f"Tool names: {[t.name for t in tools]}")
+            logger.debug("\nDetailed Tool Schemas:")
+            for tool in tools:
+                logger.debug(f"\n  Tool: {tool.name}")
+                logger.debug(f"  Description: {tool.description}")
+                # Convert parameters schema to dict for display
+                logger.debug(f"  Parameters schema: {tool.parameters}")
+        logger.debug("=" * 80)
+
+        # Create model with tools if provided
+        if tools:
+            model = genai.GenerativeModel(self.model, tools=tools)
+        else:
+            model = genai.GenerativeModel(self.model)
 
         generation_config = genai.GenerationConfig(
             temperature=temp,
@@ -143,16 +255,95 @@ class LLMClient:
             top_k=self.config.get('top_k', 40)
         )
 
+        # DEBUG: Log the converted Gemini messages structure
+        logger.debug("=" * 80)
+        logger.debug("GEMINI MESSAGES STRUCTURE")
+        logger.debug("=" * 80)
+        for i, msg in enumerate(gemini_messages):
+            part = msg['parts'][0]
+            if isinstance(part, dict):
+                logger.debug(f"Message {i+1}: role={msg['role']}, parts={list(part.keys())}")
+            else:
+                # genai.protos.Part object - log the type
+                part_type = "unknown"
+                if hasattr(part, 'function_call') and part.function_call:
+                    part_type = "function_call"
+                elif hasattr(part, 'function_response') and part.function_response:
+                    part_type = "function_response"
+                elif hasattr(part, 'text'):
+                    part_type = "text"
+                logger.debug(f"Message {i+1}: role={msg['role']}, parts=[Part({part_type})]")
+        logger.debug("=" * 80)
+
         # Start chat with history (excluding the last message which will be sent)
         chat = model.start_chat(history=gemini_messages[:-1])
 
         # Send the last message
-        response = chat.send_message(
-            gemini_messages[-1]['parts'][0]['text'],
-            generation_config=generation_config
-        )
+        # Handle both text and functionResponse messages
+        last_msg_parts = gemini_messages[-1]['parts'][0]
 
-        return response.text
+        # Check if it's a dict or genai.protos.Part
+        if isinstance(last_msg_parts, dict):
+            if 'text' in last_msg_parts:
+                response = chat.send_message(
+                    last_msg_parts['text'],
+                    generation_config=generation_config
+                )
+            elif 'functionResponse' in last_msg_parts:
+                # For functionResponse, we need to send the entire parts array
+                response = chat.send_message(
+                    gemini_messages[-1]['parts'],
+                    generation_config=generation_config
+                )
+            else:
+                raise ValueError(f"Unexpected message part structure: {last_msg_parts.keys()}")
+        else:
+            # genai.protos.Part object - send as is
+            if hasattr(last_msg_parts, 'text') and last_msg_parts.text:
+                response = chat.send_message(
+                    last_msg_parts.text,
+                    generation_config=generation_config
+                )
+            elif hasattr(last_msg_parts, 'function_response') and last_msg_parts.function_response:
+                # For functionResponse, send the entire parts array
+                response = chat.send_message(
+                    gemini_messages[-1]['parts'],
+                    generation_config=generation_config
+                )
+            else:
+                raise ValueError(f"Unexpected Part object type: {type(last_msg_parts)}")
+
+        # Check for function calls
+        if response.parts and hasattr(response.parts[0], 'function_call') and response.parts[0].function_call:
+            function_calls = []
+            for part in response.parts:
+                if hasattr(part, 'function_call') and part.function_call:
+                    fc = part.function_call
+                    # Convert Gemini format to Ollama-compatible format
+                    function_calls.append({
+                        "function": {
+                            "name": fc.name,
+                            "arguments": dict(fc.args) if fc.args else {}
+                        }
+                    })
+
+            if function_calls:
+                logger.debug(f"Gemini requested {len(function_calls)} function calls")
+                # Extract text from parts that are not function calls
+                text_parts = []
+                for part in response.parts:
+                    if hasattr(part, 'text') and part.text:
+                        text_parts.append(part.text)
+
+                return {
+                    "text": ' '.join(text_parts) if text_parts else '',
+                    "tool_calls": function_calls
+                }
+
+        # Normal text response
+        # Handle case where response.text might be None or empty
+        response_text = response.text if hasattr(response, 'text') and response.text else ""
+        return response_text
 
     def test_connection(self) -> bool:
         """Test connection to the LLM service."""
@@ -160,7 +351,13 @@ class LLMClient:
             test_messages = [{"role": "user", "content": "Hello"}]
             response = self.get_llm_response(test_messages)
 
-            if response and len(response.strip()) > 0:
+            # Handle both string and dict responses
+            if isinstance(response, dict):
+                response_text = response.get("text", "")
+            else:
+                response_text = response
+
+            if response_text and len(response_text.strip()) > 0:
                 logger.info("Successfully connected to LLM service")
                 return True
             else:
@@ -170,6 +367,63 @@ class LLMClient:
         except Exception as e:
             logger.error(f"Failed to connect to LLM service: {e}")
             return False
+
+    def test_tool_support(self) -> bool:
+        """
+        Test if current model supports tools/function calling.
+
+        For Gemini: Always returns True (all models support function calling)
+        For Ollama: Sends test request with empty tools array to check for errors
+
+        Returns:
+            True if tools supported, False otherwise
+
+        Raises:
+            RuntimeError: If tools not supported and required
+        """
+        if self.provider == 'gemini':
+            # All Gemini models support function calling
+            logger.debug(f"Gemini model {self.model} supports tools")
+            return True
+
+        elif self.provider == 'ollama':
+            # Test Ollama model by sending request with empty tools array
+            try:
+                url = f"{self.base_url}/api/chat"
+                payload = {
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": "test"}],
+                    "stream": False,
+                    "tools": []  # Empty tools array to test support
+                }
+
+                response = requests.post(url, json=payload, timeout=self.timeout)
+                response.raise_for_status()
+
+                # If we get here, tools are supported
+                logger.debug(f"Ollama model {self.model} supports tools")
+                return True
+
+            except requests.exceptions.HTTPError as e:
+                # Check if error is related to tools not being supported
+                if e.response.status_code == 400:
+                    error_msg = e.response.json().get('error', '')
+                    if 'tool' in error_msg.lower() or 'function' in error_msg.lower():
+                        logger.warning(
+                            f"Ollama model {self.model} does not support tool calling"
+                        )
+                        return False
+
+                # Re-raise if it's a different error
+                logger.error(f"Error testing tool support: {e}")
+                raise
+
+            except Exception as e:
+                logger.error(f"Failed to test tool support: {e}")
+                raise
+
+        else:
+            raise ValueError(f"Unsupported provider: {self.provider}")
 
     def get_json_response(
         self,

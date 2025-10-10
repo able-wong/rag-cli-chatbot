@@ -9,10 +9,11 @@ A command-line chatbot with Retrieval-Augmented Generation (RAG) capabilities. S
 - **Dense+Sparse Hybrid Search**: RRF fusion with SPLADE sparse embeddings and multi-persona dense vectors
 - **Intent-Based Metadata Filtering**: Natural language metadata filtering (author, date, tags)
 - **Dual Retrieval Strategies**: Choose between keyword-based "rewrite" or semantic "HyDE" search
+- **Tool Calling Support**: OpenWebUI-compatible tools for real-time information and actions
 - **Conversational Context Awareness**: Intelligent follow-up handling without re-searching
 - **LLM-Based Query Transformation**: Smart query analysis and routing for better results
 - **Configurable System Prompts**: Customize assistant role and personality
-- **Multiple LLM Providers**: Support for Ollama and Gemini
+- **Multiple LLM Providers**: Support for Ollama and Gemini (both support tool calling)
 - **Multiple Embedding Providers**: Ollama, Gemini, and SentenceTransformers
 - **Vector Database**: Qdrant integration for semantic search
 - **Smart Fallback**: "No answer" response when confidence is low
@@ -365,20 +366,96 @@ The system automatically detects three distinct query patterns based on user int
 - **Precision**: Combines semantic search with intelligent metadata filtering
 - **Performance**: Uses Qdrant indexes for efficient filtering
 
-### CLI Settings
+### Tool Calling Configuration
 
-**System Prompt Customization**:
+**OpenWebUI-Compatible Tools**: The application supports automatic tool discovery and execution for real-time information and actions (e.g., current time, web search, calculations).
+
+**Enable Tools**:
 ```yaml
-cli:
-  system_prompt: "You are a helpful AI assistant. Follow the task instructions carefully and use the specified context source as directed. If you don't know the answer based on the specified context or from conversation history, you can say you don't know."
-  max_history_length: 20  # Maximum conversation turns to keep
+tools:
+  enabled: true                  # Enable tool calling feature
+  directory: "./tools"           # Directory to auto-discover tools from
+
+  # Optional: Configure tool-specific settings
+  valves:
+    gettime: {}                  # No configuration needed for time tool
+    city_timezone: {}            # No configuration needed for city timezone tool
+    # web_search:
+    #   api_key: "your-api-key"  # Example: API key for web search tool
 ```
 
-**Custom Role Example**:
-```yaml
-cli:
-  system_prompt: "You are John's writing assistant. Your job is helping John research and write blog posts. Follow the task instructions carefully and use the specified context source as directed. If you don't know the answer based on the specified context or from conversation history, you can say you don't know."
+**Tool-Capable LLM Models**:
+
+**Gemini**: All models support function calling
+- ✅ gemini-2.5-flash
+- ✅ gemini-1.5-flash
+- ✅ gemini-1.5-pro
+
+**Ollama**: Tool support varies by model
+- ✅ qwen2.5:* (0.5B-72B) - Recommended, stable tool support
+- ✅ qwen3:* - Experimental
+- ✅ mistral:*
+- ✅ llama3.1:8b and above
+- ✅ llama3.2:3b and above
+- ✅ gemma2:9b and above
+- ✅ deepseek-r1:*
+
+**Creating Custom Tools**:
+
+Tools follow the OpenWebUI format. Create a `.py` file in the `tools/` directory:
+
+```python
+"""Example tool for getting current date and time."""
+
+from datetime import datetime
+from pydantic import BaseModel
+
+class Tools:
+    """Time utility tools."""
+
+    class Valves(BaseModel):
+        """Optional tool configuration."""
+        pass
+
+    def __init__(self):
+        self.valves = self.Valves()
+
+    def get_current_time(self) -> str:
+        """
+        Get the current time.
+
+        :return: The current time as a string.
+        """
+        current_time = datetime.now().strftime("%H:%M:%S")
+        return f"Current time: {current_time}"
 ```
+
+**Key Features**:
+- **Auto-Discovery**: Tools are automatically loaded from the configured directory
+- **Type Safety**: Uses Python type hints for parameter validation
+- **Multiple Providers**: Works with both Gemini and Ollama LLM providers
+- **Model Validation**: Checks if the selected model supports tool calling at startup
+- **Multi-Turn Conversations**: LLM can call tools and use results in responses
+
+**Included Tools**:
+- **gettime.py**: Get current date and time in various timezones
+- **city_timezone.py**: Convert city names to IANA timezone identifiers (500+ cities including aliases)
+
+**Example Tool Usage**:
+```
+You: What time is it?
+
+🔧 Calling tools:
+  • get_current_time()
+  ✓ get_current_time: Current time: 14:32:15
+
+You: What is the current time in Toronto, Ontario?
+
+🔧 Calling tools:
+  • get_timezone_for_city(city="Toronto, Ontario")
+  ✓ get_timezone_for_city: America/Toronto
+  • get_time_in_timezone(timezone="America/Toronto")
+  ✓ get_time_in_timezone: Current time in America/Toronto: 11:11:03 EDT
 
 ### Qdrant collection "documents" Schema Keys:
 
@@ -604,11 +681,19 @@ rag-cli-chatbot/
 │   ├── cli.py             # Main CLI interface with intent-based patterns
 │   ├── config_manager.py  # Configuration management
 │   ├── embedding_client.py # Embedding generation
-│   ├── llm_client.py      # LLM interaction
+│   ├── llm_client.py      # LLM interaction with tool support
 │   ├── query_rewriter.py  # Intent-based query transformation & pattern detection
 │   ├── search_service.py  # Unified search with soft filtering
 │   ├── qdrant_db.py       # Vector database client
-│   └── logging_config.py  # Logging setup
+│   ├── logging_config.py  # Logging setup
+│   └── tools/             # Tool calling system
+│       ├── __init__.py    # Tool system exports
+│       ├── loader.py      # Auto-discovery of OpenWebUI tools
+│       ├── registry.py    # Tool schema conversion
+│       ├── executor.py    # Tool execution engine
+│       └── manager.py     # Tool orchestration
+├── tools/                 # OpenWebUI-compatible tools
+│   └── gettime.py         # Example: Current date/time tool
 ├── config/                # Configuration files
 │   ├── config.sample.yaml # Sample configuration template
 │   └── config.yaml        # Main configuration (user-created)
@@ -617,6 +702,7 @@ rag-cli-chatbot/
 │   ├── test_phase1_clients.py
 │   ├── test_query_rewriter.py
 │   ├── test_search_service.py
+│   ├── test_tools.py      # Tool system unit tests
 │   └── test_cli_mocked.py
 ├── integration_tests/     # Integration tests with real LLM providers
 │   ├── test_query_rewriter_integration.py
@@ -643,8 +729,10 @@ rag-cli-chatbot/
 ### Key Features Implemented
 
 - [x] Configuration management with environment variable support
-- [x] Multiple LLM providers (Ollama, Gemini)
-- [x] Multiple embedding providers (SentenceTransformers, Ollama, Gemini) 
+- [x] Multiple LLM providers (Ollama, Gemini) with tool calling support
+- [x] Multiple embedding providers (SentenceTransformers, Ollama, Gemini)
+- [x] **OpenWebUI-Compatible Tools** - automatic tool discovery and execution
+- [x] **Tool Calling System** - multi-turn conversations with real-time function execution
 - [x] **Dense+Sparse Vector Hybrid Search** - RRF fusion with SPLADE sparse embeddings
 - [x] Qdrant vector database integration
 - [x] **Intent-Based Query Patterns** - automatic detection of search vs. question vs. search+action intents
@@ -662,7 +750,7 @@ rag-cli-chatbot/
 - [x] Query pattern testing tool (`check_query_rewriter.py`)
 - [x] Conversation history management
 - [x] Document detail viewing
-- [x] Comprehensive test suite with integration tests (76+ total tests)
+- [x] Comprehensive test suite with integration tests (224+ unit tests)
 
 ## 🔮 Future Enhancements
 
