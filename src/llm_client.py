@@ -70,7 +70,9 @@ class LLMClient:
                 raise ValueError(f"Unsupported provider: {self.provider}")
 
         except Exception as e:
+            import traceback
             logger.error(f"Failed to generate LLM response: {e}")
+            logger.error(f"Full traceback:\n{traceback.format_exc()}")
             raise
 
     def _get_ollama_response(
@@ -134,11 +136,12 @@ class LLMClient:
     ) -> Union[str, Dict[str, Any]]:
         """Get response from Gemini."""
         # Convert messages to Gemini format
+        # NOTE: Converts OpenAI-compatible message format to Gemini's format
         gemini_messages = []
 
         for msg in messages:
             role = msg['role']
-            content = msg['content']
+            content = msg.get('content', '')
 
             # Map roles
             if role == 'system':
@@ -156,9 +159,47 @@ class LLMClient:
                     'parts': [{'text': content}]
                 })
             elif role == 'assistant':
+                # Handle assistant messages (may include tool_calls)
+                # NOTE: Gemini requires either text OR functionCall, not both in same message
+                if msg.get('tool_calls'):
+                    # For tool calls, create parts with functionCall only
+                    parts = []
+                    for tc in msg['tool_calls']:
+                        # Use genai.protos for proper formatting
+                        parts.append(
+                            genai.protos.Part(
+                                function_call=genai.protos.FunctionCall(
+                                    name=tc['function']['name'],
+                                    args=tc['function'].get('arguments', {})
+                                )
+                            )
+                        )
+                    gemini_messages.append({
+                        'role': 'model',
+                        'parts': parts
+                    })
+                else:
+                    # Regular text message
+                    parts = []
+                    if content:
+                        parts.append({'text': content})
+                    gemini_messages.append({
+                        'role': 'model',
+                        'parts': parts if parts else [{'text': ''}]
+                    })
+            elif role == 'tool':
+                # Convert OpenAI 'tool' role to Gemini 'functionResponse' format
+                # Use genai.protos for proper formatting
                 gemini_messages.append({
-                    'role': 'model',
-                    'parts': [{'text': content}]
+                    'role': 'user',
+                    'parts': [
+                        genai.protos.Part(
+                            function_response=genai.protos.FunctionResponse(
+                                name=msg.get('name', ''),
+                                response={'result': content}
+                            )
+                        )
+                    ]
                 })
 
         # Use config defaults if not provided
@@ -172,7 +213,24 @@ class LLMClient:
         logger.debug(f"Messages being sent ({len(gemini_messages)} messages):")
         for i, msg in enumerate(gemini_messages):
             logger.debug(f"  Message {i+1}: role={msg['role']}")
-            logger.debug(f"    content: {msg['parts'][0]['text'][:200]}...")
+            # Safely log content based on part type
+            part = msg['parts'][0]
+            # Handle both dict and genai.protos.Part objects
+            if isinstance(part, dict):
+                if 'text' in part:
+                    logger.debug(f"    content: {part['text'][:200]}...")
+                elif 'functionCall' in part:
+                    logger.debug(f"    functionCall: {part['functionCall']['name']}")
+                elif 'functionResponse' in part:
+                    logger.debug(f"    functionResponse: {part['functionResponse']['name']}")
+            else:
+                # genai.protos.Part object
+                if hasattr(part, 'text') and part.text:
+                    logger.debug(f"    content: {part.text[:200]}...")
+                elif hasattr(part, 'function_call') and part.function_call:
+                    logger.debug(f"    functionCall: {part.function_call.name}")
+                elif hasattr(part, 'function_response') and part.function_response:
+                    logger.debug(f"    functionResponse: {part.function_response.name}")
         logger.debug(f"\nTools provided: {len(tools) if tools else 0}")
         if tools:
             logger.debug(f"Tool names: {[t.name for t in tools]}")
@@ -197,14 +255,63 @@ class LLMClient:
             top_k=self.config.get('top_k', 40)
         )
 
+        # DEBUG: Log the converted Gemini messages structure
+        logger.debug("=" * 80)
+        logger.debug("GEMINI MESSAGES STRUCTURE")
+        logger.debug("=" * 80)
+        for i, msg in enumerate(gemini_messages):
+            part = msg['parts'][0]
+            if isinstance(part, dict):
+                logger.debug(f"Message {i+1}: role={msg['role']}, parts={list(part.keys())}")
+            else:
+                # genai.protos.Part object - log the type
+                part_type = "unknown"
+                if hasattr(part, 'function_call') and part.function_call:
+                    part_type = "function_call"
+                elif hasattr(part, 'function_response') and part.function_response:
+                    part_type = "function_response"
+                elif hasattr(part, 'text'):
+                    part_type = "text"
+                logger.debug(f"Message {i+1}: role={msg['role']}, parts=[Part({part_type})]")
+        logger.debug("=" * 80)
+
         # Start chat with history (excluding the last message which will be sent)
         chat = model.start_chat(history=gemini_messages[:-1])
 
         # Send the last message
-        response = chat.send_message(
-            gemini_messages[-1]['parts'][0]['text'],
-            generation_config=generation_config
-        )
+        # Handle both text and functionResponse messages
+        last_msg_parts = gemini_messages[-1]['parts'][0]
+
+        # Check if it's a dict or genai.protos.Part
+        if isinstance(last_msg_parts, dict):
+            if 'text' in last_msg_parts:
+                response = chat.send_message(
+                    last_msg_parts['text'],
+                    generation_config=generation_config
+                )
+            elif 'functionResponse' in last_msg_parts:
+                # For functionResponse, we need to send the entire parts array
+                response = chat.send_message(
+                    gemini_messages[-1]['parts'],
+                    generation_config=generation_config
+                )
+            else:
+                raise ValueError(f"Unexpected message part structure: {last_msg_parts.keys()}")
+        else:
+            # genai.protos.Part object - send as is
+            if hasattr(last_msg_parts, 'text') and last_msg_parts.text:
+                response = chat.send_message(
+                    last_msg_parts.text,
+                    generation_config=generation_config
+                )
+            elif hasattr(last_msg_parts, 'function_response') and last_msg_parts.function_response:
+                # For functionResponse, send the entire parts array
+                response = chat.send_message(
+                    gemini_messages[-1]['parts'],
+                    generation_config=generation_config
+                )
+            else:
+                raise ValueError(f"Unexpected Part object type: {type(last_msg_parts)}")
 
         # Check for function calls
         if response.parts and hasattr(response.parts[0], 'function_call') and response.parts[0].function_call:
@@ -234,7 +341,9 @@ class LLMClient:
                 }
 
         # Normal text response
-        return response.text
+        # Handle case where response.text might be None or empty
+        response_text = response.text if hasattr(response, 'text') and response.text else ""
+        return response_text
 
     def test_connection(self) -> bool:
         """Test connection to the LLM service."""

@@ -980,18 +980,28 @@ Is there anything else I can help you with, or would you like to rephrase your q
                                 self.console.print(f"  ✗ [red]{func_name}: Error - {result['error']}[/red]")
 
                         # Build tool result messages for LLM
-                        # Add the assistant's tool call message
-                        self.conversation_history.append({
+                        # NOTE: Using OpenAI-compatible message format for conversation history.
+                        # Provider-specific conversion happens in LLMClient._get_*_response() methods.
+
+                        # Add the assistant's message with tool_calls
+                        assistant_message = {
                             "role": "assistant",
                             "content": response.get("text", "")
-                        })
+                        }
+                        # Remove empty content field if not needed
+                        if not assistant_message["content"]:
+                            del assistant_message["content"]
+                        assistant_message["tool_calls"] = tool_calls
+                        self.conversation_history.append(assistant_message)
 
-                        # Add tool results as user messages
+                        # Add tool results with 'tool' role (OpenAI standard format)
                         for i, result in enumerate(tool_results):
-                            tool_result_text = f"Tool {tool_calls[i]['function']['name']} returned: {result.get('result', result.get('error', 'Unknown error'))}"
+                            tool_call_id = tool_calls[i].get("id", f"call_{i}")
                             self.conversation_history.append({
-                                "role": "user",
-                                "content": tool_result_text
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "name": tool_calls[i]["function"]["name"],
+                                "content": str(result.get("result") or result.get("error", "Unknown error"))
                             })
 
                         # Get next response from LLM (may call more tools or give final answer)
