@@ -386,7 +386,7 @@ class RAGCLI:
     def _analyze_and_transform_query(self, user_input: str) -> Dict[str, Any]:
         """
         Analyze and transform user query using QueryRewriter.
-        
+
         Returns:
             Dict containing:
             - search_rag: boolean indicating if RAG search should be performed

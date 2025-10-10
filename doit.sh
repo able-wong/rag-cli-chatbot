@@ -20,11 +20,11 @@ case "$1" in
         ;;
     lint)
         echo "Running linter (ruff) without applying fixes..."
-        ruff check . --exclude venv
+        ruff check .
         ;;
     lint-fix)
         echo "Running linter (ruff) and applying fixes..."
-        ruff check . --fix --exclude venv
+        ruff check . --fix
         ;;
     check-query-rewriter)
         if [ -z "$2" ]; then

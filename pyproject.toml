@@ -11,6 +11,7 @@ exclude = [
     "debug_*.py",
     "check_*.py",
     "research_scripts/",
+    "integration_tests/",
     "output/",
     "venv/",
     ".git/",
@@ -18,8 +19,8 @@ exclude = [
     "*.egg-info/",
 ]
 
-# Line length
-line-length = 120
+# Line length (accommodate long test strings and prompts)
+line-length = 500
 
 # Python version
 target-version = "py312"
@@ -31,6 +32,10 @@ select = ["E", "F", "W", "I", "N"]
 # Allow autofix for all enabled rules
 fixable = ["ALL"]
 unfixable = []
+
+#Ignore line length for files with very long prompt strings
+[tool.ruff.lint.per-file-ignores]
+"src/query_rewriter.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

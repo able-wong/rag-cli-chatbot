@@ -42,7 +42,7 @@ class QueryRewriter:
     def _build_unified_system_prompt(self) -> str:
         """Build the unified system prompt for query transformation that returns both rewrite and hyde formats."""
         return f"""You are an advanced query rewriter designed to transform user queries into a JSON response for retrieval-augmented generation (RAG) systems. Your task is to analyze user prompts, extract relevant information, and generate structured outputs that can be used for both RAG search and LLM generation.
-        
+
 ## 1. Overview
 
 IF user prompt contains "{self.trigger_phrase}":
@@ -53,7 +53,7 @@ IF user prompt contains "{self.trigger_phrase}":
 IF user prompt does NOT contain "{self.trigger_phrase}":
 - Set "search_rag": false
 - Set all filters to empty objects
-- Set embedding_texts to empty values 
+- Set embedding_texts to empty values
 - Transform user query into clean LLM instruction format
 
 **PROCESSING ORDER**: Always complete filter extraction BEFORE generating embedding texts to avoid conflicts.
@@ -77,7 +77,7 @@ IF user prompt does NOT contain "{self.trigger_phrase}":
 Use natural language understanding to identify user intent and split accordingly into one of 3 patterns:
 
 1. **Document Discovery Intent** - User wants to find/browse documents
-   - User is seeking to discover or locate documents/information  
+   - User is seeking to discover or locate documents/information
    - Split: Document-seeking portion → RAG criteria | Use "SEARCH_SUMMARY_MODE" → LLM instruction
 
 2. **Search + Analysis Intent** - User wants to find documents AND perform analysis
@@ -90,7 +90,7 @@ Use natural language understanding to identify user intent and split accordingly
 
 **Splitting Examples:**
 - "find papers by Smith" → RAG: "papers by Smith" | LLM: "SEARCH_SUMMARY_MODE"
-- "locate research by Smith and explain findings" → RAG: "research by Smith" | LLM: "explain findings"  
+- "locate research by Smith and explain findings" → RAG: "research by Smith" | LLM: "explain findings"
 - "{self.trigger_phrase} what is machine learning" → RAG: "machine learning" | LLM: "what is machine learning"
 
 ## 4. Filter Extraction
@@ -106,7 +106,7 @@ Extract filters from RAG search criteria only when "{self.trigger_phrase}" prese
 
 **Tag Detection:**
 - Extract topic words as tags: "papers about python" → tags=["python"]
-- Extract explicit tags: "papers with tag python" → tags=["python"] 
+- Extract explicit tags: "papers with tag python" → tags=["python"]
 - Multiple topics: "articles about python and machine learning" → tags=["python", "machine learning"]
 
 **Date Format Conversion:**
@@ -119,7 +119,7 @@ For publication_date filters, convert date mentions to start/end date range form
 
 **Filter Scope Examples:**
 - "articles by Smith from 2024" → author=soft, date=soft (both descriptive)
-- "papers about python by Smith" → tags=soft, author=soft (both descriptive) 
+- "papers about python by Smith" → tags=soft, author=soft (both descriptive)
 - "papers about python and ML ONLY by Smith" → tags=soft, author=hard (restrictive applies to author only)
 - "papers ONLY by Smith, from 2024" → author=hard, date=soft (restrictive applies to author, date is descriptive)
 - "research exclusively from 2024 by Smith" → date=hard, author=soft (restrictive applies to date, author is descriptive)
@@ -131,7 +131,7 @@ KEY RULE: Use natural language understanding to detect intent. Everything goes t
 ### 5.1 embedding_texts.rewrite text Generation
 - "rewrite": Extract clean topic keywords from RAG search criteria. REQUIRED - NEVER leave empty. Remove:
   * Action words: "find", "search", "get", "show", "locate", "retrieve"
-  * Stop words: "the", "and", "of", "in", "from", "by", "about"  
+  * Stop words: "the", "and", "of", "in", "from", "by", "about"
   * Author names and dates (but KEEP topic words even if they were extracted as tags)
   * If removal results in empty string, use the original RAG search criteria as fallback
   * Example: "papers about python by Smith from 2025" → "papers python" (keep "python" even though it's also a tag)
@@ -172,11 +172,11 @@ Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "machine learnin
     def transform_query(self, user_query: str, rethrow_on_error: bool = False) -> Dict[str, Any]:
         """
         Transform a user query into structured format for RAG processing.
-        
+
         Args:
             user_query: The original user query
             rethrow_on_error: If True, raise exceptions instead of returning fallback result
-            
+
         Returns:
             Dict containing:
             - search_rag: boolean indicating if RAG search should be performed
@@ -242,7 +242,7 @@ Response: {{"search_rag": true, "embedding_texts": {{"rewrite": "machine learnin
 
 If context documents are provided, please:
 1. **Document Summary**: Provide a concise 2-3 sentence summary of what these documents contain
-2. **Key Topics**: List 3-4 main topics/themes found across the documents  
+2. **Key Topics**: List 3-4 main topics/themes found across the documents
 3. **Question Suggestions**: Suggest 3-4 specific questions I could ask about this content
 
 Format your response clearly with the sections above."""
@@ -252,12 +252,12 @@ Format your response clearly with the sections above."""
     def _validate_result(self, result: Dict[str, Any], original_query: str, rethrow_on_error: bool = False) -> Dict[str, Any]:
         """
         Validate and sanitize the transformation result.
-        
+
         Args:
             result: Parsed JSON result from LLM
             original_query: Original user query for fallback
             rethrow_on_error: If True, raise exceptions instead of returning fallback
-            
+
         Returns:
             Validated result dictionary
         """
@@ -401,10 +401,10 @@ Format your response clearly with the sections above."""
     def _create_fallback_result(self, user_query: str) -> Dict[str, Any]:
         """
         Create fallback result when transformation fails.
-        
+
         Args:
             user_query: Original user query
-            
+
         Returns:
             Fallback result dictionary
         """
@@ -437,7 +437,7 @@ Format your response clearly with the sections above."""
     def test_connection(self) -> bool:
         """
         Test the query rewriter by transforming a simple test query.
-        
+
         Returns:
             True if transformation works, False otherwise
         """

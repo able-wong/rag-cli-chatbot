@@ -40,10 +40,10 @@ SOFT_FILTER_CONFIG = {
 class SearchService:
     """
     Search Service responsible for search Vector DB for LLM context retrieval.
-    
+
     This service combines semantic vector search with metadata filtering and score boosting:
     - Hard filters: Must-match conditions (excludes documents if not matching)
-    - Negation filters: Must-NOT-match conditions (excludes documents if matching)  
+    - Negation filters: Must-NOT-match conditions (excludes documents if matching)
     - Soft filters: Boost-if-match conditions (increases score but doesn't exclude)
 
     Flow:
@@ -61,38 +61,38 @@ class SearchService:
     7. If soft filters present, fetch extra results and apply diminishing returns boosting
     8. Apply Stage 2 score normalization if needed (post-boost → 0.5-0.95 range)
     9. Re-rank by normalized scores and return top-k results
-    
+
     Score Normalization System:
     This service implements a two-stage normalization system to ensure consistent
     score ranges and predictable behavior across all search scenarios:
-    
+
     Stage 1 - RRF Normalization (Always Applied):
     - QdrantDB normalizes raw RRF scores (1/(60+rank)) to 0.5-0.95 range
     - Ensures consistent scale for both single and multi-vector searches
     - Enables predictable soft filter boosting calculations
-    
+
     Stage 2 - Post-Boosting Normalization (Conditional):
     - Applied only when soft filters are used and scores exceed 0.5-0.95 range
     - Re-normalizes boosted scores back to 0.5-0.95 range
     - Preserves relative ranking while maintaining score consistency
-    
+
     Search Modes:
     Three search modes are automatically selected based on configuration and available vectors:
-    
+
     1. **Dense+Sparse Hybrid Search** (enable_hybrid=True + sparse_vector available):
        - Combines multiple dense vectors (HyDE personas) with sparse keywords vector
        - Uses Qdrant native RRF (Reciprocal Rank Fusion) for optimal ranking
        - Best semantic coverage and keyword precision
-       
+
     2. **Dense-only Hybrid Search** (enable_hybrid=True + multiple dense vectors):
        - Uses RRF fusion with multiple dense vectors from HyDE personas
        - No sparse vector component
        - Better than single vector, less comprehensive than dense+sparse
-       
+
     3. **Traditional Search** (enable_hybrid=False or single dense vector):
        - Single dense vector search for backward compatibility
        - Fastest option but lowest semantic coverage
-    
+
     Score Semantics:
     - Returned scores represent ranking/sorting priority, NOT raw vector similarity
     - Trade-off: We lose original similarity precision for fusion and consistency benefits
@@ -110,7 +110,7 @@ class SearchService:
     ):
         """
         Initialize SearchService with all required providers for self-contained operation.
-        
+
         Args:
             qdrant_db: QdrantDB instance for vector search operations
             dense_embedding_client: EmbeddingClient for dense vector generation
@@ -135,7 +135,7 @@ class SearchService:
     ) -> List[ScoredPoint]:
         """
         Unified search with query processing, embedding generation, and filtering.
-        
+
         This method provides backward compatibility by returning only search results.
         For access to query analysis data (including llm_query), use unified_search_with_analysis().
         """
@@ -154,22 +154,22 @@ class SearchService:
     ) -> tuple[List[ScoredPoint], Dict[str, Any]]:
         """
         Unified search with query processing, embedding generation, and filtering.
-        
+
         Analyzes the query using QueryRewriter to extract filters and rewrite the query,
         then performs vector search with automatic filter application and score boosting.
-        
+
         Args:
             query: Raw query string to process and search
             top_k: Number of final results to return
             score_threshold: Minimum similarity score threshold
             enable_hybrid: Optional override to enable/disable hybrid search
             progress_callback: Optional callback for progress updates during search
-        
+
         Returns:
             Tuple of:
             - List of top_k ScoredPoint objects with normalized scores (0.5-0.95 range)
             - Dictionary containing query analysis data (including llm_query for LLM prompting)
-            
+
         Note on Returned Scores:
             All returned scores are normalized through our two-stage normalization system:
             - Stage 1: RRF scores normalized to 0.5-0.95 range
@@ -330,16 +330,16 @@ class SearchService:
     ) -> List[ScoredPoint]:
         """
         Perform vector search with dense and optionally sparse vectors.
-        
+
         Args:
             dense_vectors: List of dense embedding vectors (keywords + HyDE personas)
             sparse_vector: Optional sparse embedding vector for hybrid search
             limit: Number of results to return
             hard_filters: Must-match metadata filters
-            negation_filters: Must-NOT-match metadata filters  
+            negation_filters: Must-NOT-match metadata filters
             score_threshold: Minimum similarity score threshold
             enable_hybrid: Whether to use hybrid search with RRF fusion
-            
+
         Returns:
             List of ScoredPoint objects from vector search
         """
@@ -385,11 +385,11 @@ class SearchService:
     ) -> List[ScoredPoint]:
         """
         Apply diminishing returns boosting based on soft filter matches.
-        
+
         Args:
             results: List of ScoredPoint objects from initial search
             soft_filters: Dictionary of soft filter conditions
-            
+
         Returns:
             List of ScoredPoint objects with boosted scores
         """
@@ -434,14 +434,14 @@ class SearchService:
     def _normalize_boosted_scores(self, results: List[ScoredPoint]) -> List[ScoredPoint]:
         """
         Stage 2 Normalization: Re-normalize scores after soft filter boosting.
-        
+
         After applying percentage-based boosts, scores may exceed the 0.5-0.95 range.
         This method re-normalizes them back to the consistent range while preserving
         relative ranking order.
-        
+
         Args:
             results: List of ScoredPoint objects with potentially boosted scores
-            
+
         Returns:
             List of ScoredPoint objects with scores normalized to 0.5-0.95 range
         """
@@ -491,11 +491,11 @@ class SearchService:
     ) -> float:
         """
         Calculate boost multiplier using diminishing returns with field weights.
-        
+
         Args:
             document_payload: Document metadata from Qdrant
             soft_filters: Dictionary of soft filter conditions
-            
+
         Returns:
             Boost multiplier (0.0 to max_total_boost)
         """
@@ -542,12 +542,12 @@ class SearchService:
     ) -> bool:
         """
         Check if document field matches soft filter value.
-        
+
         Args:
             document_payload: Document metadata from Qdrant
             field: Field name to check
             value: Filter value to match against
-            
+
         Returns:
             True if field matches, False otherwise
         """
@@ -592,11 +592,11 @@ class SearchService:
     def _date_matches(self, doc_date: Any, filter_date: Any) -> bool:
         """
         Check if document date falls within filter date range.
-        
+
         Args:
             doc_date: Document date value (string or datetime)
             filter_date: Filter date value (string, dict with gte/lt, etc.)
-            
+
         Returns:
             True if date matches, False otherwise
         """
@@ -634,7 +634,7 @@ class SearchService:
     def get_boost_statistics(self) -> Dict[str, Any]:
         """
         Get current boost configuration for debugging/monitoring.
-        
+
         Returns:
             Dictionary with boost configuration details
         """
@@ -649,7 +649,7 @@ class SearchService:
     def update_boost_config(self, new_config: Dict[str, Any]) -> None:
         """
         Update boost configuration at runtime.
-        
+
         Args:
             new_config: Dictionary with configuration updates
         """

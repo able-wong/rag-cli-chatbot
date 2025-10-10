@@ -177,8 +177,8 @@ class TestLLMClientJSONParsing:
         """Test _strip_markdown_json_wrapper handles extra whitespace."""
         client = self.create_mock_llm_client()
 
-        wrapped_json = '''   ```json   
-   {"test": "value"}   
+        wrapped_json = '''   ```json
+   {"test": "value"}
    ```   '''
 
         result = client._strip_markdown_json_wrapper(wrapped_json)

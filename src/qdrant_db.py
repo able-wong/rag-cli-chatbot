@@ -111,17 +111,17 @@ class QdrantDB:
     ) -> List[ScoredPoint]:
         """
         Search for similar vectors in the collection with optional metadata filtering.
-        
+
         This method now uses hybrid_search() internally with RRF fusion for improved ranking.
         It is kept for backward compatibility and easier single-vector calling.
-        
+
         Args:
             query_vector: The vector to search for
             limit: Maximum number of results to return
             score_threshold: Minimum similarity score threshold
             filters: Dictionary of positive filters (must match)
             negation_filters: Dictionary of negation filters (must NOT match)
-        
+
         Returns:
             List of ScoredPoint objects matching the criteria
         """
@@ -146,7 +146,7 @@ class QdrantDB:
     ) -> List[ScoredPoint]:
         """
         Perform hybrid search using Qdrant's native RRF fusion with dense and sparse vectors.
-        
+
         Args:
             dense_vectors: List of dense embeddings (keywords + HyDE personas)
             sparse_vector: Sparse vector dictionary with indices and values
@@ -154,35 +154,35 @@ class QdrantDB:
             score_threshold: Minimum similarity score threshold (applied BEFORE RRF fusion)
             filters: Dictionary of positive filters (must match)
             negation_filters: Dictionary of negation filters (must NOT match)
-        
+
         Returns:
             List of ScoredPoint objects ranked by RRF fusion with normalized scores
-            
+
         Score Handling Philosophy:
             This method implements a two-stage normalization system designed for consistency
             and compatibility with soft filter boosting systems.
-            
+
             IMPORTANT: Returned scores represent ranking/sorting priority, NOT raw similarity.
             We deliberately trade raw similarity information for fusion and consistency benefits.
-            
+
             Stage 1 - RRF Normalization (Always Applied):
             - Raw RRF scores (1/(60+rank)) are normalized to 0.5-0.95 range
             - Ensures consistent scale across single/multi-vector searches
             - Enables predictable soft filter boosting calculations
-            
+
             Stage 2 - Post-Boosting Normalization (Applied by SearchService):
             - After soft filters apply percentage boosts, scores may exceed 0.95
             - SearchService re-normalizes back to 0.5-0.95 range if needed
             - Maintains score consistency regardless of boosting applied
-            
+
             Score Threshold Behavior:
             - score_threshold filters individual vector similarities BEFORE RRF fusion
             - This is semantically correct: "minimum similarity to consider relevant"
             - NOT applied to post-fusion ranking scores (which would be arbitrary)
-            
+
             Trade-offs:
             - ✅ Consistent score ranges across all search types
-            - ✅ Predictable soft filter boosting behavior  
+            - ✅ Predictable soft filter boosting behavior
             - ✅ Threshold filtering preserves semantic meaning
             - ❌ Loss of original vector similarity information
             - ❌ Scores no longer directly interpretable as similarity measures
@@ -358,13 +358,13 @@ class QdrantDB:
     def _normalize_rrf_scores(self, results: List[ScoredPoint]) -> List[ScoredPoint]:
         """
         Normalize RRF scores to a 0.5-0.95 range for consistency and compatibility.
-        
+
         RRF scores follow the pattern 1/(60+rank), giving values like:
         - Rank 1: 1/61 ≈ 0.016 → normalized to ~0.95
         - Rank 2: 1/62 ≈ 0.016 → normalized to ~0.90
         - etc.
-        
-        This preserves the relative ranking while making scores compatible with 
+
+        This preserves the relative ranking while making scores compatible with
         existing threshold and boost calculations.
         """
         if not results:
@@ -404,11 +404,11 @@ class QdrantDB:
     def _build_combined_filter(self, filters: Optional[Dict[str, Any]], negation_filters: Optional[Dict[str, Any]]) -> Optional[Filter]:
         """
         Build a combined Qdrant Filter object with both positive and negative conditions.
-        
+
         Args:
             filters: Dictionary containing positive filter conditions (must match)
             negation_filters: Dictionary containing negative filter conditions (must NOT match)
-        
+
         Returns:
             Qdrant Filter object or None if no valid filters
         """
@@ -445,10 +445,10 @@ class QdrantDB:
     def _build_filter_conditions(self, filters: Dict[str, Any]) -> List[FieldCondition]:
         """
         Build a list of FieldCondition objects from a filters dictionary.
-        
+
         Args:
             filters: Dictionary containing filter conditions
-        
+
         Returns:
             List of FieldCondition objects
         """
